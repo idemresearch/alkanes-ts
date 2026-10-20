@@ -1,0 +1,272 @@
+// A small in-process model of the alkanes VM host (alkanes-rs src/vm), for
+// testing contracts without running an indexer. It implements every env.*
+// host function with the same memory layout and return conventions, a fresh
+// instance per call, storage that commits only on success, and nested
+// extcalls with rollback. It does not model fuel accounting or enforce alkane
+// balances.
+
+const REVERT = [0x08, 0xc3, 0x79, 0xa0];
+
+export const u128 = {
+  encode(value) {
+    const out = new Uint8Array(16);
+    let v = BigInt(value);
+    for (let i = 0; i < 16; i++) {
+      out[i] = Number(v & 0xffn);
+      v >>= 8n;
+    }
+    return out;
+  },
+  decode(bytes, offset = 0) {
+    let v = 0n;
+    for (let i = Math.min(offset + 16, bytes.length) - 1; i >= offset; i--) {
+      v = (v << 8n) | BigInt(bytes[i]);
+    }
+    return v;
+  },
+  list(values) {
+    return concat(values.map((v) => u128.encode(v)));
+  },
+};
+
+function concat(parts) {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+  let o = 0;
+  for (const p of parts) {
+    out.set(p, o);
+    o += p.length;
+  }
+  return out;
+}
+
+const hex = (b) => Buffer.from(b).toString("hex");
+const idKey = (id) => `${id.block}:${id.tx}`;
+
+class Reader {
+  constructor(bytes) {
+    this.bytes = bytes;
+    this.offset = 0;
+  }
+  remaining() {
+    return this.bytes.length - this.offset;
+  }
+  u128() {
+    if (this.remaining() < 16) throw new Error("short read");
+    const v = u128.decode(this.bytes, this.offset);
+    this.offset += 16;
+    return v;
+  }
+  u32() {
+    const v = new DataView(this.bytes.buffer, this.bytes.byteOffset + this.offset, 4).getUint32(0, true);
+    this.offset += 4;
+    return v;
+  }
+  take(n) {
+    const v = this.bytes.slice(this.offset, this.offset + n);
+    if (v.length !== n) throw new Error("short read");
+    this.offset += n;
+    return v;
+  }
+  rest() {
+    return this.take(this.remaining());
+  }
+}
+
+function readParcel(r) {
+  const n = Number(r.u128());
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    out.push({ id: { block: r.u128(), tx: r.u128() }, value: r.u128() });
+  }
+  return out;
+}
+
+function encodeParcel(parcel) {
+  return u128.list([parcel.length, ...parcel.flatMap((t) => [t.id.block, t.id.tx, t.value])]);
+}
+
+function readStorageMap(r) {
+  const n = r.u32();
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const key = r.take(r.u32());
+    out.push([key, r.take(r.u32())]);
+  }
+  return out;
+}
+
+class RevertError extends Error {}
+
+export class AlkanesVM {
+  constructor({ height = 880000n } = {}) {
+    this.height = BigInt(height);
+    this.sequence = 0n;
+    this.modules = new Map(); // idKey -> WebAssembly.Module
+    this.storage = new Map(); // idKey -> Map<hex key, Uint8Array>
+    this.balances = new Map(); // `${who}/${what}` -> bigint
+    this.logs = [];
+  }
+
+  deploy(id, wasm) {
+    this.modules.set(idKey(id), new WebAssembly.Module(wasm));
+    return id;
+  }
+
+  setBalance(who, what, value) {
+    this.balances.set(`${idKey(who)}/${idKey(what)}`, BigInt(value));
+  }
+
+  storageOf(id) {
+    let s = this.storage.get(idKey(id));
+    if (!s) this.storage.set(idKey(id), (s = new Map()));
+    return s;
+  }
+
+  snapshot() {
+    return new Map([...this.storage].map(([k, v]) => [k, new Map(v)]));
+  }
+
+  // Runs `__meta` and returns the parsed ABI.
+  meta(id) {
+    const { exports, read } = this.instantiate(id, this.newFrame(id, { block: 0n, tx: 0n }, [], []));
+    return JSON.parse(Buffer.from(read(exports.__meta())).toString("utf8"));
+  }
+
+  // Executes a top-level message. Resolves to { alkanes, data } or throws
+  // "ALKANES: revert: ..." after rolling back, like AlkanesInstance::execute.
+  call({ target, inputs, caller = { block: 0n, tx: 0n }, incoming = [], vout = 0n }) {
+    const saved = this.snapshot();
+    try {
+      return this.execute(this.newFrame(target, caller, inputs, incoming, vout));
+    } catch (e) {
+      this.storage = saved;
+      throw e;
+    }
+  }
+
+  newFrame(myself, caller, inputs, incoming, vout = 0n) {
+    return { myself, caller, inputs: inputs.map(BigInt), incoming, vout: BigInt(vout), returndata: new Uint8Array(0) };
+  }
+
+  serializeContext(frame) {
+    return concat([
+      u128.list([frame.myself.block, frame.myself.tx, frame.caller.block, frame.caller.tx, frame.vout]),
+      encodeParcel(frame.incoming),
+      u128.list(frame.inputs),
+    ]);
+  }
+
+  instantiate(id, frame) {
+    const module = this.modules.get(idKey(id));
+    if (!module) throw new RevertError(`no contract at ${idKey(id)}`);
+    let memory;
+    const mem = () => new Uint8Array(memory.buffer);
+    const read = (ptr) => {
+      const len = new DataView(memory.buffer).getUint32(ptr - 4, true);
+      return mem().slice(ptr, ptr + len);
+    };
+    const write = (ptr, bytes) => {
+      new DataView(memory.buffer).setUint32(ptr - 4, bytes.length, true);
+      mem().set(bytes, ptr);
+      return ptr;
+    };
+    const storage = this.storageOf(frame.myself);
+    const extcall = (kind) => (cellpackPtr, alkanesPtr, checkpointPtr, _fuel) =>
+      this.extcall(kind, frame, read(cellpackPtr), read(alkanesPtr), read(checkpointPtr));
+    const env = {
+      abort: () => {
+        frame.failed = true;
+      },
+      __log: (ptr) => this.logs.push(Buffer.from(read(ptr)).toString("utf8")),
+      __request_storage: (k) => (storage.get(hex(read(k))) ?? new Uint8Array(0)).length,
+      __load_storage: (k, v) => write(v, storage.get(hex(read(k))) ?? new Uint8Array(0)),
+      __balance: (who, what, out) => {
+        const w = new Reader(read(who));
+        const t = new Reader(read(what));
+        const key = `${w.u128()}:${w.u128()}/${t.u128()}:${t.u128()}`;
+        write(out, u128.encode(this.balances.get(key) ?? 0n));
+      },
+      __request_context: () => this.serializeContext(frame).length,
+      __load_context: (out) => write(out, this.serializeContext(frame)),
+      __sequence: (out) => write(out, u128.encode(this.sequence)),
+      __fuel: (out) => write(out, new Uint8Array(new BigUint64Array([100_000_000n]).buffer)),
+      __height: (out) => write(out, new Uint8Array(new BigUint64Array([this.height]).buffer)),
+      __returndatacopy: (out) => write(out, frame.returndata),
+      __request_transaction: () => 0,
+      __load_transaction: (out) => write(out, new Uint8Array(0)),
+      __request_block: () => 0,
+      __load_block: (out) => write(out, new Uint8Array(0)),
+      __call: extcall("call"),
+      __delegatecall: extcall("delegatecall"),
+      __staticcall: extcall("staticcall"),
+    };
+    const instance = new WebAssembly.Instance(module, { env });
+    memory = instance.exports.memory;
+    return { exports: instance.exports, read };
+  }
+
+  // Runs __execute for `frame` and commits its storage writes on success.
+  execute(frame) {
+    const { exports, read } = this.instantiate(frame.myself, frame);
+    let raw;
+    try {
+      raw = read(exports.__execute());
+    } catch (e) {
+      throw new RevertError(`ALKANES: revert: ${e.message}`);
+    }
+    const r = new Reader(raw);
+    const alkanes = readParcel(r);
+    const writes = readStorageMap(r);
+    const data = r.rest();
+    if (frame.failed) {
+      const isRevert = data.length >= 4 && REVERT.every((b, i) => data[i] === b);
+      const message = isRevert ? Buffer.from(data.slice(4)).toString("utf8") : "";
+      throw new RevertError(`ALKANES: revert${message ? `: ${message}` : ""}`);
+    }
+    const storage = this.storageOf(frame.myself);
+    for (const [k, v] of writes) storage.set(hex(k), v);
+    return { alkanes, data };
+  }
+
+  extcall(kind, frame, cellpackBytes, alkanesBytes, checkpointBytes) {
+    const cp = new Reader(cellpackBytes);
+    const target = { block: cp.u128(), tx: cp.u128() };
+    const inputs = [];
+    while (cp.remaining() >= 16) inputs.push(cp.u128());
+    const incoming = readParcel(new Reader(alkanesBytes));
+    // The caller's uncommitted writes become visible to the callee first.
+    const own = this.storageOf(frame.myself);
+    for (const [k, v] of readStorageMap(new Reader(checkpointBytes))) own.set(hex(k), v);
+
+    const saved = this.snapshot();
+    const callee =
+      kind === "delegatecall"
+        ? { ...this.newFrame(frame.myself, frame.caller, inputs, incoming), code: target }
+        : this.newFrame(target, frame.myself, inputs, incoming);
+    try {
+      const { alkanes, data } =
+        kind === "delegatecall" ? this.executeDelegate(callee, target) : this.execute(callee);
+      if (kind === "staticcall") this.storage = saved;
+      frame.returndata = concat([encodeParcel(alkanes), data]);
+      return frame.returndata.length;
+    } catch (e) {
+      this.storage = saved;
+      const message = e instanceof RevertError ? e.message : String(e);
+      frame.returndata = concat([encodeParcel([]), new Uint8Array(REVERT), Buffer.from(message)]);
+      return -frame.returndata.length;
+    }
+  }
+
+  // Delegatecall runs `code`'s module against the caller's identity/storage.
+  executeDelegate(frame, code) {
+    const module = this.modules.get(idKey(code));
+    const key = idKey(frame.myself);
+    const original = this.modules.get(key);
+    this.modules.set(key, module);
+    try {
+      return this.execute(frame);
+    } finally {
+      this.modules.set(key, original);
+    }
+  }
+}

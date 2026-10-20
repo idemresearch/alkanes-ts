@@ -1,0 +1,22 @@
+{
+  "name": "alkanes-ts",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Experimental TypeScript SDK for Bitcoin alkanes contracts, compiled to WebAssembly with scriptc",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/*.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "check:wasmi": "cargo run --quiet --release --manifest-path harness/Cargo.toml --"
+  },
+  "devDependencies": {
+    "@scriptc/runtime-wasm32-wasi": "0.3.6",
+    "binaryen": "^125.0.0",
+    "scriptc": "0.3.6",
+    "typescript": "^5.9.3"
+  }
+}

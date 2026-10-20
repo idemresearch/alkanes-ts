@@ -1,0 +1,10 @@
+[package]
+name = "wasmi-check"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Same engine and version as the alkanes indexer (alkanes-rs pins wasmi 0.37.2).
+[dependencies]
+wasmi = "=0.37.2"
+anyhow = "1"
