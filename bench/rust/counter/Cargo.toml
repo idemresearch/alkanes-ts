@@ -1,0 +1,14 @@
+# Builds only as a member of an alkanes-rs workspace; see bench/build-rust.sh.
+[package]
+name = "alkanes-bench-counter"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+alkanes-support = { workspace = true }
+alkanes-runtime = { workspace = true }
+metashrew-support = { workspace = true }
+anyhow = { workspace = true }

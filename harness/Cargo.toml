@@ -8,3 +8,8 @@ publish = false
 [dependencies]
 wasmi = "=0.37.2"
 anyhow = "1"
+flate2 = "1"
+
+[lib]
+name = "wasmi_check"
+path = "src/lib.rs"

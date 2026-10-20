@@ -11,7 +11,8 @@
     "build": "node scripts/build.mjs",
     "test": "node --test test/*.test.mjs",
     "typecheck": "tsc --noEmit",
-    "check:wasmi": "cargo run --quiet --release --manifest-path harness/Cargo.toml --"
+    "check:wasmi": "cargo run --quiet --release --manifest-path harness/Cargo.toml --bin wasmi-check --",
+    "bench": "cargo run --quiet --release --manifest-path harness/Cargo.toml --bin bench --"
   },
   "devDependencies": {
     "@scriptc/runtime-wasm32-wasi": "0.3.6",

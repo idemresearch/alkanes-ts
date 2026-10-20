@@ -28,6 +28,8 @@ test("counter: __meta returns the ABI", () => {
       [2, "get_count"],
       [3, "increment_then_fail"],
       [4, "height"],
+      [5, "sum"],
+      [6, "fill"],
     ],
   );
   assert.deepEqual(abi.methods[1].params, [{ type: "u128", name: "by" }]);

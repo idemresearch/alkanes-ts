@@ -76,7 +76,7 @@ To add a contract, create `contracts/<name>/index.ts` with a default-exported `C
 - **What compiles:** scriptc handled everything the SDK needed, including classes, closures, `bigint` arithmetic for u128, `Map`, `Uint8Array`, `DataView`, `TextEncoder`/`TextDecoder`, `JSON.stringify` and try/catch. Two rough edges: `number.toString(radix)` is refused, and indexing a `bigint[]` is typed `bigint | undefined`, which is why handlers get an `Inputs` wrapper.
 - **Engine compatibility:** the output uses only bulk-memory, sign-ext, saturating float-to-int and mutable globals, all supported by wasmi 0.37 (no SIMD). The build pins wasm-opt to those features.
 - **Size:** about 260 KB raw and 112 KB gzipped, most of it the scriptc runtime. Typical Rust alkanes are in the same range.
-- **Fuel:** about 140K–270K per call, against a per-message minimum of 3.5M on mainnet. Much of that is reactor initialization, which runs on every call because the indexer creates a fresh instance each time.
+- **Fuel:** about 150K–270K per call, 3–5× an equivalent Rust contract, against a per-message minimum of 3.5M on mainnet. See [bench/](bench/README.md) for the full comparison with alkanes-rs.
 - **Host reads cost one callback per 4 bytes.** That is cheap for storage values but would add up for `transaction()`/`block()` on large blocks.
 - **Determinism** needs a proper audit before anything holds value. Known so far: floats in wasmi are software-deterministic, `Map` iteration is insertion-ordered, the clock reads 0, and randomness traps. Not yet audited: the rest of the scriptc runtime, such as hashing and GC timing.
 - **Not covered by tests yet:** deployment through an envelope on a real indexer, alkane balance enforcement (the JS VM doesn't model it), and `delegatecall`/`staticcall` beyond the JS model.
@@ -89,5 +89,6 @@ contracts/          example contracts
 shim/               adapter + WASI stand-ins in WebAssembly text
 scripts/build.mjs   build pipeline
 test/               JS alkanes host model and contract tests
-harness/            Rust wasmi 0.37.2 runner (same engine/config as the indexer)
+harness/            Rust wasmi 0.37.2 host model: wasmi-check runner and bench
+bench/              Rust twins of the examples and the alkanes-rs comparison
 ```
