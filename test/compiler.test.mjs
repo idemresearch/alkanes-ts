@@ -10,7 +10,7 @@ import { generateClient } from "../compiler/client.mjs";
 import { AlkanesVM, u128 } from "./vm.mjs";
 
 const filename = resolve("test/fixtures/probe.ts");
-const header = 'import { Contract, state, method, view, type u128 } from "../../sdk/authoring.ts";\n';
+const header = 'import { Contract, state, init, method, view, assert, type u128, type AlkaneId } from "../../sdk/authoring.ts";\n';
 const compile = (body, extra = "") => compileContract({ filename, source: header + extra + '\nexport default class Probe extends Contract {\n' + body + '\n}' });
 
 test("frontend rejects duplicate selectors/keys and unstable declarations at source locations", () => {
@@ -39,7 +39,7 @@ test("views reject direct and transitive effects, mutating opcodes, and SDK alia
     ['@view({opcode:1}) a():void {save(new Uint8Array(),new Uint8Array());}', 'import {store as save} from "../../sdk/runtime.ts";', /mutating call save/],
     ['@view({opcode:1}) a():void {const p=new StoragePointer("/x");p.setU128(1n);}', 'import {StoragePointer} from "../../sdk/index.ts";', /mutating call p.setU128/],
     ['@view({opcode:1}) a():void {const p=new StoragePointer("/x");const bytes=p.get();bytes[0]=1;}', 'import {StoragePointer} from "../../sdk/index.ts";', /object\/array alias/],
-    ['@view({opcode:1}) a():void {call(new Cellpack(new AlkaneId(2n,1n),[]),new AlkaneTransferParcel(),100);}', 'import {call, Cellpack, AlkaneId, AlkaneTransferParcel} from "../../sdk/index.ts";', /mutating call call/],
+    ['@view({opcode:1}) a():void {call(new Cellpack(new Id(2n,1n),[]),new AlkaneTransferParcel(),100);}', 'import {call, Cellpack, AlkaneId as Id, AlkaneTransferParcel} from "../../sdk/index.ts";', /mutating call call/],
   ]) assert.throws(() => compile(body, extra), message);
 });
 
@@ -55,22 +55,62 @@ test("field renames preserve keys/defaults, ABI names and full-width selectors",
   assert.doesNotMatch(first.lowered, /new Contract|\.method\(/);
 });
 
+test("initializers prove required ID state and reject lifecycle/accounting bypasses", () => {
+  const id = '@state({key:"/authority"}) private authority!:AlkaneId; ';
+  for (const [body, extra, error] of [
+    [id+'@view({opcode:1}) get():AlkaneId{return this.authority;}', '', /needs @init/],
+    [id+'@init({opcode:0}) start(a:AlkaneId):void {}', '', /every successful path/],
+    [id+'@init({opcode:0}) start(a:AlkaneId, n:u128):void {if(n>0n)this.authority=a;}', '', /every successful path/],
+    [id+'@init({opcode:0}) start(a:AlkaneId):void {return;this.authority=a;}', '', /every successful path/],
+    ['@init({opcode:0}) a():void{} @init({opcode:1}) b():void{}', '', /only one @init/],
+    ['@init({opcode:0}) start():void{} @method({opcode:1}) reset():void{this.start();}', '', /guarded entrypoint/],
+    ['@state({key:"/__alkanes/init"}) x:u128=0n;@init({opcode:0}) start():void{}', '', /reserved/],
+    ['@init({opcode:0}) start():void{const p=new StoragePointer("/x");}', 'import {StoragePointer} from "../../sdk/index.ts";', /raw storage/],
+    ['@init({opcode:0}) start():void{const b=load(utf8("/__alkanes/init"));b[0]=0;}', 'import {load,utf8} from "../../sdk/index.ts";', /raw runtime calls bypass accounting/],
+    ['@view({opcode:1,incomingAssets:"forward"}) get():void{}', '', /views reject/],
+    [id+'@init({opcode:0}) start(a:AlkaneId):void{this.authority=a;} @view({opcode:1}) read():void{this.auth.require(this.authority);}', '', /mutating call this.auth.require/],
+    ['@view({opcode:1}) read():void{this.assets.mintSelf(1n);}', '', /mutating call this.assets.mintSelf/],
+    ['@method({opcode:1}) alter():void{this.assets["reconciliationFailed"]=false;}', '', /computed access/],
+  ]) assert.throws(()=>compile(body,extra),error);
+  const result=compile(id+'@init({opcode:0}) start(a:AlkaneId,n:u128):void{if(n===0n)throw new Error("bad");this.authority=a;} @view({opcode:2}) read():AlkaneId{return this.authority;}');
+  assert.equal(result.manifest.initialized,true);
+  assert.equal(result.manifest.state[0].type,'AlkaneId');
+  assert.equal(result.manifest.state[0].default,null);
+  assert.deepEqual(result.manifest.methods[0].params,[{name:'a',type:'AlkaneId'},{name:'n',type:'u128'}]);
+  assert.match(result.lowered,/new __alk_AlkaneId\(__alk_arg0, __alk_arg1\)/);
+  assert.match(result.lowered,/context.inputs.length < 4/);
+});
+
 test("generated client types reject wrong arguments and keep views out of prepare", () => {
   const manifest = compileContract({ filename: resolve("contracts/counter/index.ts") }).manifest;
   const clientFile = join(directory, "CounterClient.ts");
   writeFileSync(clientFile, generateClient(manifest, resolve("client/runtime.ts")));
+  writeFileSync(join(directory, "CappedTokenClient.ts"), generateClient(compileContract({filename:resolve("contracts/capped-token/index.ts")}).manifest, resolve("client/runtime.ts")));
   const consumer = join(directory, "consumer.ts");
   writeFileSync(consumer, `import {CounterClient} from "./CounterClient.ts";
+import {CappedTokenClient} from "./CappedTokenClient.ts";
 const client = new CounterClient({simulate: async () => ({data:new Uint8Array(16),alkanes:[]})}, {block:2n,tx:1n});
 const count: Promise<bigint> = client.read.getCount();
 const simulated: Promise<{value:bigint;data:Uint8Array;alkanes:unknown[]}> = client.simulate.increment({by:1n});
 client.prepare.increment({by:1n});
+// @ts-expect-error this entrypoint rejects incoming assets
+client.call.increment({by:1n}).withAssets([]);
 // @ts-expect-error u128 client arguments are bigint
 client.prepare.increment({by:1});
 // @ts-expect-error methods cannot be read as views
 client.read.increment({by:1n});
 // @ts-expect-error views cannot be prepared for submission
 client.prepare.getCount();
+const token = new CappedTokenClient({simulate: async () => ({data:new Uint8Array(32),alkanes:[]})}, {block:2n,tx:1n});
+const authority: Promise<{block:bigint;tx:bigint}> = token.read.getAuthority();
+token.call.mint({amount:1n}).withAssets([{id:{block:4n,tx:9001n},value:1n}]);
+const deployment = CappedTokenClient.deploy({simulate: async () => ({data:new Uint8Array(),alkanes:[]})}, new Uint8Array(), {authority:{block:4n,tx:9001n},cap:100n});
+// @ts-expect-error initializer rejects incoming assets
+deployment.withAssets([]);
+// @ts-expect-error AlkaneId requires both u128 limbs
+token.call.initialize({authority:{block:4n},cap:100n});
+// @ts-expect-error AlkaneId limbs must be bigint
+token.call.initialize({authority:{block:4n,tx:9001},cap:100n});
 `);
   const program = ts.createProgram([consumer], { target:ts.ScriptTarget.ES2022, module:ts.ModuleKind.ES2022,
     moduleResolution:ts.ModuleResolutionKind.Bundler, strict:true, noEmit:true, allowImportingTsExtensions:true, skipLibCheck:true, types:[] });
@@ -84,6 +124,20 @@ const transpile = (source) => ts.transpileModule(source, { compilerOptions: { ta
 for (const file of readdirSync("sdk").filter((f) => f.endsWith(".ts"))) {
   writeFileSync(join(directory, file.replace(/\.ts$/, ".mjs")), transpile(readFileSync(join("sdk", file), "utf8")).replace(/(["']\.\/.+)\.ts(["'])/g, "$1.mjs$2"));
 }
+test("self auth requires an original incoming asset, not self issuance or a changed context", async () => {
+  const {Assets,Auth} = await import(pathToFileURL(join(directory,"assets.mjs")));
+  const {AlkaneId,AlkaneTransferParcel,Context} = await import(pathToFileURL(join(directory,"types.mjs")));
+  const self = new AlkaneId(2n,1n);
+  const incoming = new AlkaneTransferParcel();
+  const assets = new Assets(new Context(self,self,0n,incoming,[]));
+  assets.mintSelf(1n);
+  incoming.pay(self,1n);
+  assert.throws(()=>new Auth(assets).require(self), /AUTH_ASSET_REQUIRED/);
+  const valid = new Assets(new Context(self,self,0n,new AlkaneTransferParcel().pay(self,1n),[]));
+  valid.mintSelf(1n);
+  assert.doesNotThrow(()=>new Auth(valid).require(self));
+  assert.equal(valid.finish(new Uint8Array()).alkanes.transfers[0].value,2n);
+});
 test("runtime guards reject writes and mutating host calls in read-only mode", async () => {
   const effects = await import(pathToFileURL(join(directory, "effects.mjs")));
   const runtime = await import(pathToFileURL(join(directory, "runtime.mjs")));

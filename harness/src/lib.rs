@@ -150,15 +150,15 @@ fn extcall(c: &mut Caller<'_, Frame>, kind: Kind, cellpack: i32, alkanes: i32, c
         }
         let incoming = parse_parcel(&mut &read_ab(c, alkanes)[..])?;
         // The caller's uncommitted writes become visible to the callee.
+        let saved = world.state.borrow().clone();
         let pending = parse_storage_map(&mut &read_ab(c, checkpoint)[..])?;
         world.state.borrow_mut().storage.entry(myself).or_default().extend(pending);
         let fuel = c.get_fuel()?;
-        let saved = world.state.borrow().clone();
         let outcome = match kind {
             Kind::Delegate => world.execute_as(target, myself, c.data().caller, &inputs, &incoming, fuel),
             _ => world.execute_as(target, target, myself, &inputs, &incoming, fuel),
         };
-        if matches!(kind, Kind::Static) {
+        if matches!(kind, Kind::Static) || outcome.result.is_err() {
             *world.state.borrow_mut() = saved;
         }
         c.set_fuel(fuel.saturating_sub(outcome.fuel_used))?;
@@ -171,7 +171,7 @@ fn extcall(c: &mut Caller<'_, Frame>, kind: Kind, cellpack: i32, alkanes: i32, c
     };
     let len = returndata.len() as i32;
     c.data_mut().returndata = returndata;
-    if ok { len } else { -len }
+    if ok { len } else { c.data_mut().failed = true; -len }
 }
 
 fn linker(engine: &Engine) -> Result<Linker<Frame>> {

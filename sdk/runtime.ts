@@ -158,6 +158,11 @@ function extcall(kind: number, cellpack: Cellpack, alkanes: AlkaneTransferParcel
     }
     throw new Error("Extcall failed (no details available)");
   }
+  // A successful mutating call committed our checkpoint and may have changed
+  // caller storage through a callback. Reads and the final response must not
+  // replay a stale checkpoint over those changes. Static calls roll back the
+  // checkpoint and therefore retain the caller's buffered writes.
+  if (kind !== EXTCALL_STATICCALL) cache = new Map<string, StorageEntry>();
   return response;
 }
 

@@ -63,6 +63,15 @@ export function compileContract({ filename, source = readFileSync(filename, "utf
             if (binding.propertyName) fail(binding, "authoring imports cannot be aliased in v1");
           }
         }
+        // assert is a runtime primitive; the other bindings are compiler
+        // markers or types and disappear from generated code.
+        if (statement.importClause?.namedBindings && ts.isNamedImports(statement.importClause.namedBindings) &&
+            statement.importClause.namedBindings.elements.some((b) => b.name.text === "assert")) {
+          imports.push({ statement: ts.factory.updateImportDeclaration(statement, statement.modifiers,
+            ts.factory.updateImportClause(statement.importClause, false, undefined,
+              ts.factory.createNamedImports([ts.factory.createImportSpecifier(false, undefined, ts.factory.createIdentifier("assert"))])),
+            statement.moduleSpecifier, statement.attributes), path });
+        }
         continue;
       }
       if (!["index.ts", "u128.ts", "types.ts", "bytes.ts", "runtime.ts"].some((f) => path === resolve(sdkDirectory, f))) {
@@ -115,7 +124,7 @@ export function compileContract({ filename, source = readFileSync(filename, "utf
   const abiNames = new Set();
   for (const member of contract.members) {
     const memberName = member.name && nameOf(member.name);
-    if (!memberName || memberName.startsWith("__alk") || memberName === "context") fail(member, "unsupported or reserved member name");
+    if (!memberName || memberName.startsWith("__alk") || ["context", "assets", "auth"].includes(memberName)) fail(member, "unsupported or reserved member name");
     if (methods.has(memberName) || fields.has(memberName)) fail(member, "duplicate contract member");
     if (ts.isPropertyDeclaration(member)) {
       if (modifiers(member).some((m) => m.kind === ts.SyntaxKind.StaticKeyword)) {
@@ -129,13 +138,17 @@ export function compileContract({ filename, source = readFileSync(filename, "utf
       if (decorators(member).length) {
         const ds = decorators(member);
         if (ds.length !== 1 || !ts.isCallExpression(ds[0].expression) || ds[0].expression.expression.getText(parsed) !== "state") fail(member, "expected @state");
-        if (!isU128(member.type) || !member.initializer || !ts.isBigIntLiteral(member.initializer)) fail(member, "v1 state fields require u128 and a bigint literal default");
-        if (member.questionToken || member.exclamationToken || modifiers(member).some((m) => m.kind === ts.SyntaxKind.ReadonlyKeyword)) fail(member, "state must be a mutable, initialized field");
+        const type = member.type?.getText(parsed);
+        if (!["u128", "AlkaneId"].includes(type)) fail(member, "state fields require u128 or AlkaneId");
+        if (type === "u128" && (!member.initializer || !ts.isBigIntLiteral(member.initializer))) fail(member, "u128 state fields require a bigint literal default");
+        if (type === "AlkaneId" && (member.initializer || !member.exclamationToken)) fail(member, "AlkaneId state must be a required field (field!: AlkaneId), assigned by @init");
+        if (member.questionToken || (type === "u128" && member.exclamationToken) || modifiers(member).some((m) => m.kind === ts.SyntaxKind.ReadonlyKeyword)) fail(member, "state must be a mutable field");
         const { key } = literalOptions(ds[0], ["key"]);
         if (!key || !ts.isStringLiteral(key) || !key.text.length) fail(member, "state requires an explicit nonempty literal key");
         if (keys.has(key.text)) fail(member, `duplicate storage key ${key.text}`);
+        if (key.text.startsWith("/__alkanes/")) fail(member, "storage key is reserved for compiler lifecycle state");
         keys.add(key.text);
-        fields.set(memberName, { member, key: key.text, default: uintLiteral(member.initializer) });
+        fields.set(memberName, { member, key: key.text, type, default: type === "u128" ? uintLiteral(member.initializer) : null });
       } else {
         if (!member.initializer) fail(member, "temporary fields require initializers");
         const init = member.initializer;
@@ -154,35 +167,88 @@ export function compileContract({ filename, source = readFileSync(filename, "utf
         if (modifiers(member).some((m) => [ts.SyntaxKind.PrivateKeyword, ts.SyntaxKind.ProtectedKeyword].includes(m.kind))) fail(member, "exposed methods must be public");
         const decorator = ds[0];
         const kind = ts.isCallExpression(decorator.expression) && decorator.expression.expression.getText(parsed);
-        if (ds.length !== 1 || !["method", "view"].includes(kind)) fail(member, "expected @method or @view");
-        const { opcode, abiName } = literalOptions(decorator, ["opcode", "abiName"]);
+        if (ds.length !== 1 || !["method", "view", "init"].includes(kind)) fail(member, "expected @method, @view or @init");
+        const { opcode, abiName, incomingAssets: assetPolicy } = literalOptions(decorator, ["opcode", "abiName", "incomingAssets"]);
         info.opcode = uintLiteral(opcode).toString();
         info.view = kind === "view";
+        info.init = kind === "init";
+        if (assetPolicy && (!ts.isStringLiteral(assetPolicy) || !["reject", "forward"].includes(assetPolicy.text))) fail(assetPolicy, 'incomingAssets must be "reject" or "forward"');
+        if (info.view && assetPolicy?.text === "forward") fail(assetPolicy, "views reject incoming assets");
+        info.incomingAssets = assetPolicy?.text;
         if (abiName && !ts.isStringLiteral(abiName)) fail(abiName, "abiName must be a string literal");
         info.abiName = abiName?.text ?? memberName;
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(info.abiName)) fail(member, "invalid ABI name");
         if (opcodes.has(info.opcode)) fail(member, `duplicate opcode ${info.opcode}`);
         if (abiNames.has(info.abiName)) fail(member, `duplicate ABI name ${info.abiName}`);
         opcodes.add(info.opcode); abiNames.add(info.abiName);
+        let slot = 1;
         info.params = member.parameters.map((p) => {
-          if (!ts.isIdentifier(p.name) || !isU128(p.type) || p.initializer || p.questionToken || p.dotDotDotToken) fail(p, "ABI parameters must be required u128 values");
-          return p.name.text;
+          const type = p.type?.getText(parsed);
+          if (!ts.isIdentifier(p.name) || !["u128", "AlkaneId"].includes(type) || p.initializer || p.questionToken || p.dotDotDotToken) fail(p, "ABI parameters must be required u128 or AlkaneId values");
+          const param = {name:p.name.text, type, slot};
+          slot += type === "AlkaneId" ? 2 : 1;
+          return param;
         });
+        info.slots = slot;
         const returns = member.type?.getText(parsed);
-        if (!["u128", "void", "CallResponse"].includes(returns)) fail(member, "ABI returns must be u128, void or CallResponse");
+        if (!["u128", "AlkaneId", "void", "CallResponse"].includes(returns)) fail(member, "ABI returns must be u128, AlkaneId, void or CallResponse");
+        if (info.init && returns !== "void") fail(member, "@init must return void");
         info.returns = returns;
         exposed.push(info);
       }
     } else fail(member, "constructors, accessors and index signatures are not supported in v1");
   }
   if (!exposed.length) fail(contract, "contract needs an exposed method");
+  const initializers = exposed.filter((m) => m.init);
+  if (initializers.length > 1) fail(initializers[1].member, "only one @init is allowed");
+  const initializer = initializers[0];
+  const required = [...fields].filter(([, f]) => f.type === "AlkaneId").map(([name]) => name);
+  if (required.length && !initializer) fail(contract, "required AlkaneId state needs @init");
+  for (const m of exposed) m.incomingAssets ??= incomingAssets;
+  if (initializer && required.length) {
+    // Definite assignment on normal init exits. Loops/try/switch and helper
+    // writes are deliberately not guessed at; direct assignments and if/else
+    // cover the initial language subset, with runtime validation as a backstop.
+    const checkExit = (set, node) => {
+      const missing = required.filter((name) => !set.has(name));
+      if (missing.length) fail(node, `@init must assign required state on every successful path: ${missing.join(", ")}`);
+    };
+    const flow = (statements, initial) => {
+      let set = new Set(initial);
+      for (const statement of statements) {
+        if (ts.isThrowStatement(statement)) return null;
+        if (ts.isReturnStatement(statement)) { checkExit(set, statement); return null; }
+        if (ts.isIfStatement(statement)) {
+          const branch = (s) => flow(ts.isBlock(s) ? s.statements : [s], set);
+          const a = branch(statement.thenStatement), b = statement.elseStatement ? branch(statement.elseStatement) : new Set(set);
+          if (a === null && b === null) return null;
+          set = a === null ? b : b === null ? a : new Set([...a].filter((name) => b.has(name)));
+        } else if (ts.isBlock(statement)) {
+          set = flow(statement.statements, set);
+          if (set === null) return null;
+        } else if (ts.isExpressionStatement(statement) && ts.isBinaryExpression(statement.expression)) {
+          const expression = statement.expression;
+          if (expression.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isPropertyAccessExpression(expression.left) &&
+              expression.left.expression.kind === ts.SyntaxKind.ThisKeyword && required.includes(expression.left.name.text)) set.add(expression.left.name.text);
+        } else if (!(ts.isExpressionStatement(statement) || ts.isVariableStatement(statement) || ts.isEmptyStatement(statement))) {
+          fail(statement, "required-state @init supports straight-line statements and if/else; unsupported control flow cannot prove initialization");
+        }
+      }
+      return set;
+    };
+    const end = flow(initializer.member.body.statements, new Set());
+    if (end !== null) checkExit(end, initializer.member);
+  }
+  let usesAssets = false;
+  let usesAuth = false;
+  const rawCalls = [];
 
   // Effect summaries are computed over the whole local call graph, including
   // private helpers. Unknown calls fail closed when reachable from a view.
   const pureSDK = new Set(["height", "log", "balance", "sequence", "fuel", "transaction", "block", "load", "staticcall", "readU128s",
     "u128ToBytes", "bytesToU128", "utf8", "fromUtf8", "toHex", "bytesEqual", "concat", "checkedAdd", "checkedSub",
     "get", "getU128", "getString", "isEmpty", "select", "keyword", "serialize", "equals", "toString", "withData", "withU128", "withString",
-    "checked", "add", "sub", "mul", "div", "mod", "bitAnd", "bitOr", "bitXor", "shl", "shr", "bitNot", "wrappingAdd", "wrappingSub", "mulDiv"]);
+    "assert", "available", "checked", "add", "sub", "mul", "div", "mod", "bitAnd", "bitOr", "bitXor", "shl", "shr", "bitNot", "wrappingAdd", "wrappingSub", "mulDiv"]);
   const symbolOf = (node) => {
     const sym = checker.getSymbolAtLocation(node);
     return sym && (sym.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(sym) : sym);
@@ -191,6 +257,16 @@ export function compileContract({ filename, source = readFileSync(filename, "utf
   const stateAccess = (node) => ts.isPropertyAccessExpression(node) && node.expression.kind === ts.SyntaxKind.ThisKeyword && fields.get(node.name.text)?.key !== undefined;
   for (const info of methods.values()) {
     const scan = (node) => {
+      if (ts.isElementAccessExpression(node)) {
+        const symbol=checker.getTypeAtLocation(node.expression).getSymbol();
+        if (symbol?.declarations?.some((d)=>ts.isClassDeclaration(d)&&resolve(dirname(d.getSourceFile().fileName))===resolve(sdkDirectory))) {
+          fail(node,"SDK objects require declared property access; computed access can bypass capability privacy");
+        }
+      }
+      if (ts.isPropertyAccessExpression(node) && node.expression.kind === ts.SyntaxKind.ThisKeyword) {
+        if (node.name.text === "assets") usesAssets = true;
+        if (node.name.text === "auth") { usesAssets = true; usesAuth = true; }
+      }
       if (ts.isIdentifier(node) && symbolOf(node) === checker.getSymbolAtLocation(contract.name)) fail(node, "the contract class cannot be used as a runtime value in v1");
       if (node.kind === ts.SyntaxKind.ThisKeyword && !ts.isPropertyAccessExpression(node.parent)) fail(node, "this cannot escape or use dynamic property access");
       if (ts.isPropertyAccessExpression(node) && node.expression.kind === ts.SyntaxKind.ThisKeyword && methods.has(node.name.text) &&
@@ -207,12 +283,15 @@ export function compileContract({ filename, source = readFileSync(filename, "utf
       }
       if (ts.isCallExpression(node)) {
         if (ts.isPropertyAccessExpression(node.expression) && node.expression.expression.kind === ts.SyntaxKind.ThisKeyword && methods.has(node.expression.name.text)) {
+          if (methods.get(node.expression.name.text).init) fail(node, "@init can only be invoked through its guarded entrypoint");
           info.edges.add(node.expression.name.text);
         } else {
           const target = ts.isPropertyAccessExpression(node.expression) ? node.expression.name : node.expression;
           const sym = symbolOf(target);
           const declarations = sym?.declarations ?? [];
           const sdkCall = declarations.some((d) => resolve(dirname(d.getSourceFile().fileName)) === resolve(sdkDirectory));
+          if (sdkCall && ["call", "delegatecall", "staticcall", "load", "store", "resetStorage"].includes(sym.name) &&
+              declarations.some((d) => d.getSourceFile().fileName.endsWith("/runtime.ts"))) rawCalls.push(node);
           const trusted = sdkCall && pureSDK.has(sym.name);
           const builtin = declarations.some((d) => /typescript\/lib\/lib\..*\.d\.ts$/.test(d.getSourceFile().fileName)) &&
             ["BigInt", "Number", "toString"].includes(sym.name);
@@ -223,6 +302,7 @@ export function compileContract({ filename, source = readFileSync(filename, "utf
       if (ts.isNewExpression(node)) {
         const sym = symbolOf(node.expression);
         if (!["StoragePointer", "Uint8Array", "Error", "CallResponse", "AlkaneId", "AlkaneTransferParcel", "Cellpack"].includes(sym?.name)) fail(node, "unsupported constructor");
+        if (initializer && sym?.name === "StoragePointer") fail(node, "@init contracts use typed state; raw storage can alias reserved lifecycle keys");
       }
       ts.forEachChild(node, scan);
     };
@@ -239,6 +319,9 @@ export function compileContract({ filename, source = readFileSync(filename, "utf
     }
   };
   for (const info of exposed) if (info.view) checkView(info);
+  if (initializer) for (const info of fields.values()) if (!info.key && ts.isNewExpression(info.member.initializer)) fail(info.member, "@init contracts use typed state, not raw StoragePointer fields");
+  if ((usesAssets || initializer) && rawCalls.length) fail(rawCalls[0], "initialized/tracked contracts must use typed state and this.assets.call; raw runtime calls bypass accounting");
+  if (usesAssets) for (const m of exposed) if (m.returns === "CallResponse") fail(m.member, "tracked assets require primitive/void returns; the compiler constructs the asset response");
 
   const operators = new Map([
     [ts.SyntaxKind.PlusToken, "add"], [ts.SyntaxKind.MinusToken, "sub"], [ts.SyntaxKind.AsteriskToken, "mul"],
@@ -262,6 +345,7 @@ export function compileContract({ filename, source = readFileSync(filename, "utf
         if (ts.isIdentifier(n) && n.text.startsWith("__alk")) fail(n, "reserved compiler identifier");
         if (ts.isBigIntLiteral(n)) { uintLiteral(n); return n; }
         if (ts.isTypeReferenceNode(n) && n.typeName.getText(parsed) === "u128") return f.createKeywordTypeNode(ts.SyntaxKind.BigIntKeyword);
+        if (ts.isTypeReferenceNode(n) && n.typeName.getText(parsed) === "AlkaneId") return f.createTypeReferenceNode("__alk_AlkaneId", undefined);
         if (ts.isBinaryExpression(n) && (isBig(n.left) || isBig(n.right))) {
           const op = n.operatorToken.kind;
           if ([ts.SyntaxKind.PlusToken, ts.SyntaxKind.PlusEqualsToken].includes(op) && !isBig(n)) return ts.visitEachChild(n, visit, context);
@@ -297,6 +381,12 @@ export function compileContract({ filename, source = readFileSync(filename, "utf
   const members = [];
   for (const [field, info] of fields) {
     if (info.key === undefined) members.push(transform(info.member));
+    else if (info.type === "AlkaneId") members.push(`private get ${field}(): __alk_AlkaneId {
+    const bytes = __alk_state_${field}.get();
+    if (bytes.length !== 32) throw new Error(${JSON.stringify("uninitialized or invalid AlkaneId state: " + info.key)});
+    return new __alk_AlkaneId(__alk_bytesToU128(bytes), __alk_bytesToU128(bytes, 16));
+  }
+  private set ${field}(value: __alk_AlkaneId) { __alk_state_${field}.set(value.serialize()); }`);
     else members.push(`private get ${field}(): bigint {
     const bytes = __alk_state_${field}.get();
     if (bytes.length === 0) return ${info.default}n;
@@ -311,10 +401,10 @@ export function compileContract({ filename, source = readFileSync(filename, "utf
   }
   const abi = '{ "contract": ' + JSON.stringify(name) + ', "methods": [' + exposed.map((m) =>
     '{ "name": ' + JSON.stringify(m.abiName) + ', "opcode": ' + m.opcode + ', "params": [' + m.params.map((p) =>
-      JSON.stringify({ type: "u128", name: p })).join(", ") + '], "returns": ' + JSON.stringify(m.returns === "CallResponse" ? "bytes" : m.returns) + ' }').join(", ") + '] }';
-  const states = [...fields].filter(([, f]) => f.key !== undefined).map(([field, f]) => ({ field, key: f.key, type: "u128", default: f.default.toString() }));
-  const manifest = { format: 1, contract: name, incomingAssets, state: states, methods: exposed.map((m) => ({
-    name: m.name, abiName: m.abiName, opcode: m.opcode, view: m.view, params: m.params.map((name) => ({ name, type: "u128" })), returns: m.returns,
+      JSON.stringify({ type: p.type, name: p.name })).join(", ") + '], "returns": ' + JSON.stringify(m.returns === "CallResponse" ? "bytes" : m.returns) + ' }').join(", ") + '] }';
+  const states = [...fields].filter(([, f]) => f.key !== undefined).map(([field, f]) => ({ field, key: f.key, type: f.type, default: f.default === null ? null : f.default.toString() }));
+  const manifest = { format: 2, contract: name, incomingAssets, initialized: !!initializer, trackedAssets: usesAssets, state: states, methods: exposed.map((m) => ({
+    name: m.name, abiName: m.abiName, opcode: m.opcode, view: m.view, init: m.init, incomingAssets: m.incomingAssets, params: m.params.map(({name, type}) => ({ name, type })), returns: m.returns,
   })) };
   // Output uses absolute SDK imports so benchmark copies can select their own
   // SDK implementation without changing compiler semantics.
@@ -324,28 +414,35 @@ export function compileContract({ filename, source = readFileSync(filename, "utf
 import * as __alk_math from ${importSDK("u128.ts")};
 import { StoragePointer as __alk_StoragePointer } from ${importSDK("runtime.ts")};
 import { bytesToU128 as __alk_bytesToU128, utf8 as __alk_utf8 } from ${importSDK("bytes.ts")};
-import { Context as __alk_Context, CallResponse as __alk_CallResponse } from ${importSDK("types.ts")};
+import { Context as __alk_Context, CallResponse as __alk_CallResponse, AlkaneId as __alk_AlkaneId } from ${importSDK("types.ts")};
 import { setReadOnly as __alk_setReadOnly } from ${importSDK("effects.ts")};
 import { executeDispatch as __alk_executeDispatch } from ${importSDK("contract.ts")};
+${usesAssets ? `import { Assets as __alk_Assets${usesAuth ? ", Auth as __alk_Auth" : ""} } from ${importSDK("assets.ts")};` : ""}
+${initializer ? `import { beginInvocation as __alk_begin, finishInvocation as __alk_finish } from ${importSDK("lifecycle.ts")};` : ""}
 ${states.map((s) => `const __alk_state_${s.field} = new __alk_StoragePointer(${JSON.stringify(s.key)});`).join("\n")}
 class ${name} {
-  constructor(public readonly context: __alk_Context) {}
+  ${usesAuth ? "public readonly auth: __alk_Auth;" : ""}
+  constructor(public readonly context: __alk_Context${usesAssets ? ", public readonly assets: __alk_Assets" : ""}) {${usesAuth ? " this.auth = new __alk_Auth(assets);" : ""}}
   ${members.join("\n")}
 }
 function __alk_dispatch(context: __alk_Context): __alk_CallResponse {
   if (context.inputs.length === 0) throw new Error("No opcode provided");
-  ${incomingAssets === "reject" ? 'if (context.incomingAlkanes.transfers.length !== 0) throw new Error("contract rejects incoming assets");' : ""}
   const opcode = context.inputs[0];
-  const contract = new ${name}(context);
+  ${usesAssets ? "const assets = new __alk_Assets(context);" : ""}
+  const contract = new ${name}(context${usesAssets ? ", assets" : ""});
   ${exposed.map((m) => `if (opcode === ${m.opcode}n) {
-    if (context.inputs.length < ${m.params.length + 1}) throw new Error(${JSON.stringify(m.abiName + " expects " + m.params.length + " inputs")});
-    ${m.params.map((_, i) => `const __alk_arg${i} = context.inputs[${i + 1}]; if (__alk_arg${i} === undefined) throw new Error("missing input");`).join("\n")}
+    if (context.inputs.length < ${m.slots}) throw new Error(${JSON.stringify(m.abiName + " expects " + (m.slots - 1) + " inputs")});
+    ${m.incomingAssets === "reject" || m.view ? `if (context.incomingAlkanes.transfers.length !== 0) throw new Error(${JSON.stringify(m.view && m.incomingAssets === "forward" ? "view rejects incoming assets" : "contract rejects incoming assets")});` : ""}
+    ${Array.from({length:m.slots-1}, (_, i) => `const __alk_arg${i} = context.inputs[${i + 1}]; if (__alk_arg${i} === undefined) throw new Error("missing input");`).join("\n")}
+    ${initializer ? `__alk_begin(${m.init}, ${m.view});` : ""}
     __alk_setReadOnly(${m.view});
     try {
-      ${incomingAssets === "forward" && m.view ? 'if (context.incomingAlkanes.transfers.length !== 0) throw new Error("view rejects incoming assets");' : ""}
-      ${m.returns === "void" ? "" : "const value = "}contract.${m.name}(${m.params.map((_, i) => `__alk_arg${i}`).join(", ")});
+      ${m.returns === "void" ? "" : "const value = "}contract.${m.name}(${m.params.map((p) => p.type === "AlkaneId" ? `new __alk_AlkaneId(__alk_arg${p.slot-1}, __alk_arg${p.slot})` : `__alk_arg${p.slot-1}`).join(", ")});
+      ${m.init ? required.map((field) => `if (__alk_state_${field}.get().length !== 32) throw new Error("required state missing");`).join("\n") : ""}
+      ${initializer ? `__alk_finish(${m.init}, ${m.view});` : ""}
       ${m.returns === "CallResponse" ? `${m.view ? 'if (value.alkanes.transfers.length !== 0) throw new Error("view cannot transfer assets");' : ""}return value;` :
-        `return ${incomingAssets === "forward" && !m.view ? "__alk_CallResponse.forward(context.incomingAlkanes)" : "new __alk_CallResponse()"}${m.returns === "u128" ? ".withU128(__alk_math.checked(value))" : ""};`}
+        usesAssets ? `return assets.finish(${m.returns === "void" ? "new Uint8Array(0)" : m.returns === "u128" ? "new __alk_CallResponse().withU128(__alk_math.checked(value)).data" : "value.serialize()"});` :
+        `return ${m.incomingAssets === "forward" && !m.view ? "__alk_CallResponse.forward(context.incomingAlkanes)" : "new __alk_CallResponse()"}${m.returns === "u128" ? ".withU128(__alk_math.checked(value))" : m.returns === "AlkaneId" ? ".withData(value.serialize())" : ""};`}
     } finally { __alk_setReadOnly(false); }
   }`).join("\n")}
   throw new Error("Unrecognized opcode " + opcode.toString());

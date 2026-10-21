@@ -185,7 +185,7 @@ export class AlkanesVM {
       mem().set(bytes, ptr);
       return ptr;
     };
-    const storage = this.storageOf(frame.myself);
+    const storage = () => this.storageOf(frame.myself);
     const extcall = (kind) => (cellpackPtr, alkanesPtr, checkpointPtr, _fuel) =>
       this.extcall(kind, frame, read(cellpackPtr), read(alkanesPtr), read(checkpointPtr));
     const env = {
@@ -193,8 +193,8 @@ export class AlkanesVM {
         frame.failed = true;
       },
       __log: (ptr) => this.logs.push(Buffer.from(read(ptr)).toString("utf8")),
-      __request_storage: (k) => (storage.get(hex(read(k))) ?? new Uint8Array(0)).length,
-      __load_storage: (k, v) => write(v, storage.get(hex(read(k))) ?? new Uint8Array(0)),
+      __request_storage: (k) => (storage().get(hex(read(k))) ?? new Uint8Array(0)).length,
+      __load_storage: (k, v) => write(v, storage().get(hex(read(k))) ?? new Uint8Array(0)),
       __balance: (who, what, out) => {
         const w = new Reader(read(who));
         const t = new Reader(read(what));
@@ -249,11 +249,11 @@ export class AlkanesVM {
     const inputs = [];
     while (cp.remaining() >= 16) inputs.push(cp.u128());
     const incoming = readParcel(new Reader(alkanesBytes));
+    const saved = this.snapshot();
     // The caller's uncommitted writes become visible to the callee first.
     const own = this.storageOf(frame.myself);
     for (const [k, v] of readStorageMap(new Reader(checkpointBytes))) own.set(hex(k), v);
 
-    const saved = this.snapshot();
     const callee =
       kind === "delegatecall"
         ? { ...this.newFrame(frame.myself, frame.caller, inputs, incoming), code: target }
@@ -266,6 +266,9 @@ export class AlkanesVM {
       return frame.returndata.length;
     } catch (e) {
       this.storage = saved;
+      // The canonical host aborts the caller when an extcall fails, even if
+      // its source catches the SDK exception and returns a normal response.
+      frame.failed = true;
       const message = e instanceof RevertError ? e.message : String(e);
       frame.returndata = concat([encodeParcel([]), new Uint8Array(REVERT), Buffer.from(message)]);
       return -frame.returndata.length;
