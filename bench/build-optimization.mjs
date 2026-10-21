@@ -7,6 +7,7 @@ import { cpSync, lstatSync, mkdirSync, readFileSync, symlinkSync, unlinkSync, wr
 import { createHash } from "node:crypto";
 import { symbols } from "./isolation/exports.mjs";
 import { prepareVariant } from "./optimization/variants.mjs";
+import { compileContract } from "../compiler/index.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -65,7 +66,8 @@ for (const variant of ["baseline", "codecs"]) {
   cpSync(join(root, "contracts"), join(directory, "contracts"), { recursive: true });
   for (const name of ["counter", "token"]) {
     const entry = join(directory, `${name}-entry.ts`);
-  writeFileSync(entry, `import contract from "./contracts/${name}/index.ts";
+    const compiled = compileContract({ filename: join(directory, "contracts", name, "index.ts"), sdkDirectory: join(directory, "sdk") });
+    writeFileSync(entry, compiled?.lowered ?? `import contract from "./contracts/${name}/index.ts";
 import { executeContract, contractMeta } from "./sdk/contract.ts";
 export function execute(context: Uint8Array): Uint8Array { return executeContract(contract, context); }
 export function meta(): Uint8Array { return contractMeta(contract); }

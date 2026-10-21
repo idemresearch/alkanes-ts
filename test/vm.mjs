@@ -144,6 +144,21 @@ export class AlkanesVM {
     }
   }
 
+  // Client transport adapter: successful mutations are rolled back too.
+  simulate(request) {
+    const saved = this.snapshot();
+    const logs = this.logs.slice();
+    const balances = new Map(this.balances);
+    const sequence = this.sequence;
+    try { return this.call(request); }
+    finally {
+      this.storage = saved;
+      this.logs = logs;
+      this.balances = balances;
+      this.sequence = sequence;
+    }
+  }
+
   newFrame(myself, caller, inputs, incoming, vout = 0n) {
     return { myself, caller, inputs: inputs.map(BigInt), incoming, vout: BigInt(vout), returndata: new Uint8Array(0) };
   }

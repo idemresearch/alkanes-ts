@@ -6,6 +6,8 @@
 // the adapter and return its length; the SDK then copies it out four bytes at a
 // time with __alk_scratch_read.
 
+import { assertWritable } from "./effects.ts";
+
 declare function __alk_abort(): void;
 declare function __alk_log(message: Uint8Array): void;
 declare function __alk_scratch_read(offset: number): number;
@@ -92,6 +94,7 @@ export function hostExtcall(
   storage: Uint8Array,
   fuel: number,
 ): ExtcallResult {
+  if (kind !== EXTCALL_STATICCALL) assertWritable();
   const status = __alk_extcall(kind, cellpack, alkanes, storage, fuel);
   return new ExtcallResult(status, readScratch(status < 0 ? -status : status));
 }

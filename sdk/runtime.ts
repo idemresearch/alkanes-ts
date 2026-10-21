@@ -33,6 +33,7 @@ import {
   isRevertData,
   revertMessage,
 } from "./types.ts";
+import { assertWritable, setReadOnly } from "./effects.ts";
 
 class StorageEntry {
   constructor(
@@ -46,6 +47,7 @@ class StorageEntry {
 let cache = new Map<string, StorageEntry>();
 
 export function resetStorage(): void {
+  setReadOnly(false);
   cache = new Map<string, StorageEntry>();
 }
 
@@ -65,6 +67,7 @@ export function load(key: Uint8Array): Uint8Array {
 }
 
 export function store(key: Uint8Array, value: Uint8Array): void {
+  assertWritable();
   cache.set(toHex(key), new StorageEntry(key, value));
 }
 

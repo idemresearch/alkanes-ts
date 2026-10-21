@@ -1,49 +1,63 @@
-import { CallResponse, Contract, StoragePointer, checkedAdd, height, log, param, u128ToBytes } from "../../sdk/index.ts";
+import { Contract, state, method, view, type u128 } from "../../sdk/authoring.ts";
+import { StoragePointer, height, log, u128ToBytes } from "../../sdk/index.ts";
 
-const initialized = new StoragePointer("/initialized");
-const count = new StoragePointer("/count");
+export default class Counter extends Contract {
+  static readonly incomingAssets = "reject";
 
-export default new Contract("Counter")
-  .method(0, "initialize", [], "void", () => {
-    if (!initialized.isEmpty()) throw new Error("already initialized");
-    initialized.set(new Uint8Array([1]));
-    count.setU128(0n);
-    return new CallResponse();
-  })
-  .method(1, "increment", [param("by")], "u128", (_ctx, args) => {
-    const next = checkedAdd(count.getU128(), args.u128(0));
-    count.setU128(next);
-    return new CallResponse().withU128(next);
-  })
-  .method(2, "get_count", [], "u128", () => new CallResponse().withU128(count.getU128()))
-  .method(3, "increment_then_fail", [], "void", () => {
-    count.setU128(count.getU128() + 1n);
+  @state({ key: "/count" })
+  private count: u128 = 0n;
+
+  // Temporary pointer; preserve the existing initialized-byte layout.
+  private readonly initialized = new StoragePointer("/initialized");
+
+  @method({ opcode: 0 })
+  initialize(): void {
+    if (!this.initialized.isEmpty()) throw new Error("already initialized");
+    this.initialized.set(new Uint8Array([1]));
+    this.count = 0n;
+  }
+
+  @method({ opcode: 1 })
+  increment(by: u128): u128 {
+    this.count += by;
+    return this.count;
+  }
+
+  @view({ opcode: 2, abiName: "get_count" })
+  getCount(): u128 {
+    return this.count;
+  }
+
+  @method({ opcode: 3, abiName: "increment_then_fail" })
+  incrementThenFail(): void {
+    this.count += 1n;
     throw new Error("intentional failure");
-  })
-  .method(4, "height", [], "u128", () => {
+  }
+
+  @view({ opcode: 4 })
+  height(): u128 {
     const h = height();
     log("counter: block height is " + h.toString());
-    return new CallResponse().withU128(h);
-  })
-  // Benchmark workloads: u128 arithmetic in a loop, and many storage writes.
-  .method(5, "sum", [param("n")], "u128", (_ctx, args) => {
-    const n = args.u128(0);
-    // For n <= 300,000 every square and partial sum is an exact integer below
-    // 2^53. Keep the same loop, using native numeric arithmetic within that
-    // proven range and converting only the final result to the u128 ABI.
+    return h;
+  }
+
+  @view({ opcode: 5 })
+  sum(n: u128): u128 {
+    // Squares and partial sums are exact below 2^53 in this proven range.
     if (n <= 300_000n) {
       const bound = Number(n) | 0;
       let total = 0;
       for (let i = 0; i < bound; i = (i + 1) | 0) total += i * i;
-      return new CallResponse().withU128(BigInt(total));
+      return BigInt(total);
     }
-    let total = 0n;
-    for (let i = 0n; i < n; i++) total = checkedAdd(total, i * i);
-    return new CallResponse().withU128(total);
-  })
-  .method(6, "fill", [param("n")], "void", (_ctx, args) => {
-    const n = args.u128(0);
+    let total: u128 = 0n;
+    for (let i: u128 = 0n; i < n; i++) total += i * i;
+    return total;
+  }
+
+  @method({ opcode: 6 })
+  fill(n: u128): void {
     const slots = new StoragePointer("/slots/");
-    for (let i = 0n; i < n; i++) slots.select(u128ToBytes(i)).setU128(i);
-    return new CallResponse();
-  });
+    for (let i: u128 = 0n; i < n; i++) slots.select(u128ToBytes(i)).setU128(i);
+  }
+}

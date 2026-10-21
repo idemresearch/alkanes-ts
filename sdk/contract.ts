@@ -119,14 +119,29 @@ function errorMessage(e: unknown): string {
   return String(e);
 }
 
+export function executeDispatch(dispatch: (context: Context) => CallResponse, contextBytes: Uint8Array): Uint8Array {
+  resetStorage();
+  try {
+    const response = dispatch(Context.parse(contextBytes));
+    return extendedResponse(response.alkanes, serializeStorage(), response.data);
+  } catch (e) {
+    // Like handle_error: flag the failure to the host, which rolls back state
+    // and surfaces the message after the revert selector.
+    hostAbort();
+    const empty = new ByteWriter().u32(0).finish();
+    return extendedResponse(new AlkaneTransferParcel(), empty, revertData("Error: " + errorMessage(e)));
+  }
+}
+
 export function executeContract(contract: Contract, contextBytes: Uint8Array): Uint8Array {
+  // Keep the fluent API's direct dispatch path; adapting it through a closure
+  // adds work to every legacy invocation. Both entry paths use the same wire
+  // codecs and rollback protocol.
   resetStorage();
   try {
     const response = contract.dispatch(Context.parse(contextBytes));
     return extendedResponse(response.alkanes, serializeStorage(), response.data);
   } catch (e) {
-    // Like handle_error: flag the failure to the host, which rolls back state
-    // and surfaces the message after the revert selector.
     hostAbort();
     const empty = new ByteWriter().u32(0).finish();
     return extendedResponse(new AlkaneTransferParcel(), empty, revertData("Error: " + errorMessage(e)));

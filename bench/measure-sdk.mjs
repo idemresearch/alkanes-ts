@@ -53,7 +53,7 @@ function measure(path, inputs) {
   return reference;
 }
 
-let report = `# Production SDK optimization\n\nscriptc/runtime ${version}; wasmi 0.37.2 with the host's 512-page memory setup. Each contract call sequence is repeated ${iterations} times from a fresh world. All response data, ABI text, expected revert messages and fuel counts are checked. Fuel excludes production host surcharges; no wall-clock claims.\n\n`;
+let report = `# Production contract comparison\n\nscriptc/runtime ${version}; wasmi 0.37.2 with the host's 512-page memory setup. Each contract call sequence is repeated ${iterations} times from a fresh world. All response data, ABI text, expected revert messages and fuel counts are checked. Fuel excludes production host surcharges; no wall-clock claims.\n\n`;
 for (const [contract, inputs] of Object.entries(workloads)) {
   const before = join(baselineRoot, `${contract}.wasm`);
   const after = join(root, "dist", `${contract}.wasm`);

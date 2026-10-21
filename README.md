@@ -3,20 +3,26 @@
 An experiment in writing [alkanes](https://github.com/kungfuflex/alkanes-rs) smart contracts for Bitcoin in TypeScript. Contracts are compiled to WebAssembly ahead of time with [scriptc](https://github.com/vercel-labs/scriptc), with no JavaScript engine in the output.
 
 ```ts
-import { CallResponse, Contract, StoragePointer, checkedAdd, param } from "../../sdk/index.ts";
+import { Contract, state, method, view, type u128 } from "../../sdk/authoring.ts";
 
-const count = new StoragePointer("/count");
+export default class Counter extends Contract {
+  static readonly incomingAssets = "reject";
+  @state({ key: "/count" }) private count: u128 = 0n;
 
-export default new Contract("Counter")
-  .method(1, "increment", [param("by")], "u128", (_ctx, args) => {
-    const next = checkedAdd(count.getU128(), args.u128(0));
-    count.setU128(next);
-    return new CallResponse().withU128(next);
-  })
-  .method(2, "get_count", [], "u128", () => new CallResponse().withU128(count.getU128()));
+  @method({ opcode: 1 })
+  increment(by: u128): u128 {
+    this.count += by;
+    return this.count;
+  }
+
+  @view({ opcode: 2, abiName: "get_count" })
+  getCount(): u128 { return this.count; }
+}
 ```
 
 Status: the example contracts build, pass a behavioral test suite, and run under wasmi 0.37.2, the engine and version the alkanes indexer uses. They have not been deployed to a regtest or mainnet indexer yet.
+
+Counter uses the new restricted Alkanes frontend for persistent fields, checked operators, enforced views, static dispatch and generated clients. Token retains the explicit SDK API. See the [authoring semantics, client usage and current limits](docs/AUTHORING.md). The package is private; `@alkanes/contract` remains the proposed public entry point.
 
 ## How it works
 
@@ -25,7 +31,7 @@ An alkane is a Wasm module that exports `memory`, `__execute` and `__meta` and i
 scriptc can't produce that module directly. Its library mode emits a WASI reactor whose host callbacks are imported from a `scriptc` namespace, can take bytes but only return scalars, and can't reenter the module. `scripts/build.mjs` closes the gap:
 
 ```
-contracts/<name>/index.ts ─┐
+contracts/<name>/index.ts ── Alkanes frontend (class contracts) ─┐
 sdk/*.ts ──────────────────┴─ scriptc --lib (wasm32-wasi) ─► contract.wasm
                                                                 │
 shim/adapter.wat  (alkanes env.* ⇄ scriptc callbacks) ─────────┤ wasm-merge
@@ -53,19 +59,21 @@ The SDK uses arithmetic ASCII hex encoding, two-limb u128 codecs and direct u32 
 
 The latest pass also removes string-keyed opcode dispatch and adds an exact numeric fast path to the counter's sum loop. The [speed comparison](bench/SPEED.md) measures both fuel and execution time against Rust, including a Rust build given the same numeric optimization.
 
+The [frontend fuel comparison](bench/FRONTEND_FUEL_RESULTS.md) records the new class implementation against `3762cad`; the [frontend Rust comparison](bench/FRONTEND_SPEED_RESULTS.md) measures it against both original and matched numeric Rust implementations.
+
 ```console
 $ npm install
 $ npm run build              # every contract in contracts/, or: npm run build -- counter
-dist/counter.wasm  271240 bytes (115671 gzipped)
-dist/token.wasm  274091 bytes (116115 gzipped)
-$ npm test                   # contracts against test/vm.mjs, a JS model of the alkanes host
+dist/counter.wasm  224679 bytes (98795 gzipped)
+dist/token.wasm  274249 bytes (116163 gzipped)
+$ npm test                   # rebuild, compiler/client tests, and Wasm host-model tests
 $ npm run check:wasmi -- dist/counter.wasm --meta 0 1,5 2 3
-loaded dist/counter.wasm (271240 bytes) under wasmi 0.37.2
-__meta  fuel=47411     { "contract": "Counter", ... }
-[0]  fuel=61495     ok alkanes=0 data=
-[1,5]  fuel=58794     ok alkanes=0 data=05000000000000000000000000000000 u128=5
-[2]  fuel=55658     ok alkanes=0 data=05000000000000000000000000000000 u128=5
-[3]  fuel=63284     REVERT "Error: intentional failure"
+loaded dist/counter.wasm (224679 bytes) under wasmi 0.37.2
+__meta  fuel=12311     { "contract": "Counter", ... }
+[0]  fuel=44472     ok alkanes=0 data=
+[1,5]  fuel=48904     ok alkanes=0 data=05000000000000000000000000000000 u128=5
+[2]  fuel=38721     ok alkanes=0 data=05000000000000000000000000000000 u128=5
+[3]  fuel=48932     REVERT "Error: intentional failure"
 ```
 
 Each argument to `check:wasmi` is one call, given as comma-separated u128 inputs with the opcode first. Storage persists between calls.
@@ -81,9 +89,9 @@ To add a contract, create `contracts/<name>/index.ts` with a default-exported `C
 
 - **What compiles:** scriptc handled everything the SDK needed, including classes, closures, `bigint` arithmetic for u128, `Map`, `Uint8Array`, `DataView`, `TextEncoder`/`TextDecoder`, `JSON.stringify` and try/catch. Two rough edges: `number.toString(radix)` is refused, and indexing a `bigint[]` is typed `bigint | undefined`, which is why handlers get an `Inputs` wrapper.
 - **Engine compatibility:** the output uses only bulk-memory, sign-ext, saturating float-to-int and mutable globals, all supported by wasmi 0.37 (no SIMD). The build pins wasm-opt to those features.
-- **Size:** about 271–274 KB raw and 116 KB gzipped for these examples, including the scriptc runtime.
-- **Fuel:** the optimized example reads, initialization, increment and mint calls use about 49K–72K fuel. The [codec before/after report](bench/SDK_OPTIMIZATION_RESULTS.md) measures 53–67% savings on these calls and 84% on 1,000 storage writes, using the current dispatch on both sides. The [execution report](bench/EXECUTION_RESULTS.md) measures the additional dispatch and numeric-loop changes against `588dda7`. Bigint-heavy loops remain expensive; the counter sum uses exact numbers only within a proven bound.
-- **Execution speed:** the [current Rust comparison](bench/SPEED_RESULTS.md) includes original and matched numeric Rust builds. The numeric sum beats the original u128 Rust loop at n=10,000; equally optimized Rust and ordinary Rust calls remain faster in wall time. Lower TS fuel on storage writes does not imply lower CPU time. The [older Rust tables](bench/README.md) and [initial isolation report](bench/ISOLATION.md) remain historical records.
+- **Size:** about 225 KB raw / 99 KB gzipped for class Counter, and 275 KB / 116 KB for legacy Token, including the scriptc runtime.
+- **Fuel:** Counter reads, initialization and increments use about 39K–49K instruction fuel. The [frontend comparison](bench/FRONTEND_FUEL_RESULTS.md) measures the class frontend against the previous implementation, including the cost of fully checked bigint loops. The [codec report](bench/SDK_OPTIMIZATION_RESULTS.md) and [execution report](bench/EXECUTION_RESULTS.md) record earlier optimization passes. Bigint-heavy loops remain expensive; Counter uses numbers only within a proven exact range.
+- **Execution speed:** the [frontend Rust comparison](bench/FRONTEND_SPEED_RESULTS.md) includes original and matched numeric Rust builds. The numeric sum beats the original u128 Rust loop at n=10,000; equally optimized Rust and ordinary Rust calls remain faster in wall time. Lower TS fuel on storage writes does not imply lower CPU time. The [previous Rust comparison](bench/SPEED_RESULTS.md), [older Rust tables](bench/README.md) and [initial isolation report](bench/ISOLATION.md) remain historical records.
 - **Host reads cost one callback per 4 bytes.** That is cheap for storage values but would add up for `transaction()`/`block()` on large blocks.
 - **Determinism** needs a proper audit before anything holds value. Known so far: floats in wasmi are software-deterministic, `Map` iteration is insertion-ordered, the clock reads 0, and randomness traps. Not yet audited: the rest of the scriptc runtime, such as hashing and GC timing.
 - **Not covered by tests yet:** deployment through an envelope on a real indexer, alkane balance enforcement (the JS VM doesn't model it), and `delegatecall`/`staticcall` beyond the JS model.
@@ -92,6 +100,8 @@ To add a contract, create `contracts/<name>/index.ts` with a default-exported `C
 
 ```
 sdk/                TypeScript contract SDK (compiled into every contract)
+compiler/           restricted class frontend, effect checks and client generator
+client/             off-chain client encoding and simulation transport interface
 contracts/          example contracts
 shim/               adapter + WASI stand-ins in WebAssembly text
 scripts/build.mjs   build pipeline

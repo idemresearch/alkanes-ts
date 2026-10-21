@@ -10,5 +10,5 @@
     "allowImportingTsExtensions": true,
     "skipLibCheck": true
   },
-  "include": ["sdk", "contracts", "bench/isolation/*.ts", "bench/optimization/*.ts"]
+  "include": ["sdk", "client", "contracts", "bench/isolation/*.ts", "bench/optimization/*.ts"]
 }
