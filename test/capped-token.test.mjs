@@ -29,6 +29,7 @@ const supply=vm=>u128.decode(vm.call({target,inputs:[101]}).data);
 
 test('CappedToken initialization gates every method/view, preserves typed IDs and rolls back failed init',()=>{
  const vm=setup();
+ assert.deepEqual(vm.meta(target),JSON.parse(readFileSync('dist/capped-token.abi.json','utf8')));
  for(const inputs of [[77,1],[101],[102],[103]])assert.throws(()=>vm.call({target,inputs}),/NOT_INITIALIZED/);
  assert.throws(()=>initialize(vm,0n),/INVALID_CAP/);
  initialize(vm);

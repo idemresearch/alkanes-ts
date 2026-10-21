@@ -42,7 +42,7 @@ shim/wasi.wat     (deterministic WASI stand-ins) ──────────�
                                       dist/<name>.wasm, dist/<name>.wasm.gz
 ```
 
-- **`sdk/`** is the contract-side library. It implements the alkanes wire types (`AlkaneId`, `Cellpack`, `Context`, `CallResponse`, transfer parcels), a storage write cache that is returned with the response the way `alkanes-runtime` does it, `StoragePointer`, chain queries, extcalls, and opcode dispatch with `__meta` ABI generation. u128 values are `bigint`s.
+- **`sdk/`** is the contract-side library. It implements the alkanes wire types (`AlkaneId`, `Cellpack`, `Context`, `CallResponse`, transfer parcels), a storage write cache that is returned with the response the way `alkanes-runtime` does it, `StoragePointer`, chain queries, extcalls, and opcode dispatch with `__meta` ABI generation. Public u128 values are `bigint`s. Eligible contracts use compiler-private word handles and `shim/word.c`, compiled into the same metered Wasm module; their generated adapter comes from `compiler/word-abi.mjs`.
 - **`shim/adapter.wat`** implements `__execute` and `__meta`. It initializes the reactor, loads the context, calls the scriptc export, and copies the result into arraybuffer layout. It also implements each `__alk_*` callback on top of the matching `env.*` host function. Host results that are bytes go into a scratch buffer that the SDK reads back 4 bytes per callback. Since scriptc rejects reentry, buffers created inside callbacks come from an arena that the adapter grows with `memory.grow`.
 - **`shim/wasi.wat`** satisfies the runtime's WASI imports deterministically: no environment, a clock fixed at 0, `stdout` routed to `__log`, and `random_get` traps.
 - The build fails if the final module imports anything outside `env` or exports anything besides `memory`, `__execute` and `__meta`.
@@ -51,22 +51,24 @@ Reverts follow `alkanes-runtime`: a thrown `Error` calls `env.abort` and returns
 
 ## Usage
 
-Requirements: Node.js 24+, [Zig](https://ziglang.org) 0.16 on `PATH` (scriptc uses it to link Wasm). Rust is needed for the standalone wasmi check and canonical-runtime integration/benchmarks; see [CappedToken setup](docs/CAPPED_TOKEN.md#verification-and-benchmarking).
+Requirements: Node.js 24+, [Zig](https://ziglang.org) on `PATH` (the current reports use 0.17.0). Zig links scriptc output and builds the fixed-width Wasm SDK. Rust is needed for the standalone wasmi check and canonical-runtime integration/benchmarks; see [CappedToken setup](docs/CAPPED_TOKEN.md#verification-and-benchmarking).
 
 The compiler, `@scriptc/runtime-wasm32-wasi`, and `@scriptc/types` are pinned together at **0.4.0**. Saved benchmark reports record the toolchain used for each measurement.
 
 The SDK uses arithmetic ASCII hex encoding, two-limb u128 codecs and direct u32 byte writes. See the [production before/after fuel report](bench/SDK_OPTIMIZATION_RESULTS.md) for the measured savings against the previous codecs.
 
-The latest pass also removes string-keyed opcode dispatch and adds an exact numeric fast path to the counter's sum loop. The [speed comparison](bench/SPEED.md) measures both fuel and execution time against Rust, including a Rust build given the same numeric optimization.
+Counter removes string-keyed opcode dispatch and has an exact numeric fast path for its sum loop. The [speed comparison](bench/SPEED.md) measures both fuel and execution time against Rust, including a Rust build given the same numeric optimization.
 
 The [frontend fuel comparison](bench/FRONTEND_FUEL_RESULTS.md) records the new class implementation against `3762cad`; the [frontend Rust comparison](bench/FRONTEND_SPEED_RESULTS.md) measures it against both original and matched numeric Rust implementations.
 
-The [CappedToken benchmark](bench/CAPPED_TOKEN_RESULTS.md) compares scriptc with Rust O3/fat-LTO and Rust plus wasm-opt through the actual Alkanes indexer. Unlike earlier instruction-only host models, its fuel includes canonical host/storage charges and nested auth execution. [Integration results and artifact hashes](integration/RESULTS.md) record the exact upstream revision and test provenance.
+The [CappedToken optimization comparison](bench/CAPPED_TOKEN_OPTIMIZATION_RESULTS.md) runs the original bigint representation, the new fixed-width lowering, and unchanged optimized Rust through the actual Alkanes indexer. [Compiler/SDK isolation](bench/CAPPED_TOKEN_ISOLATION_RESULTS.md) separates compilation, startup and execution and tests SDK algorithm alternatives. [Fixed-width lowering](docs/WORD_LOWERING.md) explains the supported subset and the C helpers compiled into the same metered Wasm module. scriptc still compiles the contract methods. [Integration results](integration/RESULTS.md) record the upstream revision and hashes; the [first CappedToken benchmark](bench/CAPPED_TOKEN_RESULTS.md) remains a historical baseline.
+
+In the paired 30-run comparison, authenticated mint uses 108,865 fuel versus 197,787 for Rust O3/LTO plus wasm-opt O3, and takes 5.71 ms versus 6.90 ms. Wide mint and all three views also beat optimized Rust in fuel and local indexing time. Fresh deployment timing includes chain bootstrap and does not establish isolated initializer speed.
 
 ```console
 $ npm install
 $ npm run build              # every contract in contracts/, or: npm run build -- counter
-dist/capped-token.wasm  ~242 KB (~105 KB gzipped)
+dist/capped-token.wasm  ~108 KB (~47 KB gzipped)
 dist/counter.wasm  ~226 KB (~99 KB gzipped)
 dist/token.wasm  ~274 KB (~116 KB gzipped)
 $ npm test                   # rebuild, compiler/client tests, and Wasm host-model tests
@@ -95,7 +97,7 @@ To add a contract, create `contracts/<name>/index.ts` with a default-exported `C
 
 - **What compiles:** scriptc handled everything the SDK needed, including classes, closures, `bigint` arithmetic for u128, `Map`, `Uint8Array`, `DataView`, `TextEncoder`/`TextDecoder`, `JSON.stringify` and try/catch. Two rough edges: `number.toString(radix)` is refused, and indexing a `bigint[]` is typed `bigint | undefined`, which is why handlers get an `Inputs` wrapper.
 - **Engine compatibility:** the output uses only bulk-memory, sign-ext, saturating float-to-int and mutable globals, all supported by wasmi 0.37 (no SIMD). The build pins wasm-opt to those features.
-- **Size:** about 226 KB raw / 99 KB gzipped for class Counter, 242 KB / 105 KB for CappedToken, and 274 KB / 116 KB for legacy Token, including the scriptc runtime.
+- **Size:** about 226 KB raw / 99 KB gzipped for class Counter, 108 KB / 47 KB for CappedToken, and 274 KB / 116 KB for legacy Token, including the scriptc runtime.
 - **Fuel:** Counter reads, initialization and increments use about 39K–49K instruction fuel. The [frontend comparison](bench/FRONTEND_FUEL_RESULTS.md) measures the class frontend against the previous implementation, including the cost of fully checked bigint loops. The [codec report](bench/SDK_OPTIMIZATION_RESULTS.md) and [execution report](bench/EXECUTION_RESULTS.md) record earlier optimization passes. Bigint-heavy loops remain expensive; Counter uses numbers only within a proven exact range.
 - **Execution speed:** the [frontend Rust comparison](bench/FRONTEND_SPEED_RESULTS.md) includes original and matched numeric Rust builds. The numeric sum beats the original u128 Rust loop at n=10,000; equally optimized Rust and ordinary Rust calls remain faster in wall time. Lower TS fuel on storage writes does not imply lower CPU time. The [previous Rust comparison](bench/SPEED_RESULTS.md), [older Rust tables](bench/README.md) and [initial isolation report](bench/ISOLATION.md) remain historical records.
 - **Host reads cost one callback per 4 bytes.** That is cheap for storage values but would add up for `transaction()`/`block()` on large blocks.

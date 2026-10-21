@@ -1,0 +1,22 @@
+import {execFileSync} from 'node:child_process';
+import {readFileSync,writeFileSync} from 'node:fs';
+import {resolve,join} from 'node:path';
+import {createHash} from 'node:crypto';
+import {cpus,platform,arch} from 'node:os';
+const root=resolve(import.meta.dirname,'..');
+const args=process.argv.slice(2);let output='bench/CAPPED_TOKEN_ISOLATION_RESULTS.md';
+while(args.length){if(args.shift()!=='--output')throw new Error('usage: --output FILE');output=args.shift();}
+const names=['floor','empty','baseline','arrays','arrays-codecs','arrays-plain-codecs','error-only','binaryen-o3','word'];
+const files=[...names.map(n=>'dist/capped-opt/'+n+'.wasm'),'bench/dist/capped/rust-capped-token-opt.wasm'];
+const version=(bin,args)=>execFileSync(bin,args,{encoding:'utf8',cwd:root}).trim();
+const result=execFileSync('cargo',['run','--quiet','--release','--manifest-path','harness/Cargo.toml','--bin','capped','--',...files],{cwd:root,encoding:'utf8'});
+let report='# CappedToken compiler and SDK isolation\n\n';
+report+=`Machine: ${cpus()[0].model}, ${platform()} ${arch()}. scriptc ${version(join(root,'node_modules/.bin/scriptc'),['--version'])}; Zig ${version('zig',['version'])}; ${version(join(root,'node_modules/.bin/wasm-opt'),['--version'])}.\n\n`;
+report+='wasmi 0.37.2, release native harness. Compilation: 30 fresh-engine/module samples. Export timing: 50 fresh-instance samples from identical state; instance creation shown separately, extra growth to 512 pages skipped. Startup: three fresh-instance checks of the existing adapter initialization guard, isolated from execution. The extra benchmark export can affect optimizer layout; production end-to-end numbers live in CAPPED_TOKEN_OPTIMIZATION_RESULTS.md.\n\n';
+report+='The floor has no SDK. Empty adds the actual SDK dispatch/context/response pipeline on the same 112-byte context and identical empty output. Each empty module has cold and explicitly initialized measurements. Those linked-feature differences include scriptc implementation costs; they are not an additive percentage decomposition of CappedToken.\n\n';
+report+='CappedToken variants preserve the authored methods. Arrays replace decimal-key maps in asset/storage bookkeeping. Codecs add a checked u32 encoding fast path; plain-codecs also replace DataView with byte operations. Error-only removes the non-Error formatting fallback as a **diagnostic ablation only**, not a production change. Binaryen O3 changes optimizer posture. Word is the shipped fixed-width representation and Wasm SDK; user methods still compile with scriptc.\n\n';
+report+='All CappedToken/Rust rows check complete responses and resulting storage, including transfers, against one reference. They invoke the same actual standard-auth Wasm and opcode-1 parcel as the canonical tests. This standalone host model excludes production host surcharges, real balance enforcement and indexer CPU costs. Do not subtract its fuel from canonical-runtime totals to estimate host fees.\n\n'+result;
+report+='\nHashes:\n\n```text\n';
+for(const file of [...files,'dist/capped-opt/auth.wasm'])report+=`${file}: ${createHash('sha256').update(readFileSync(join(root,file))).digest('hex')}\n`;
+report+='```\n\nReproduce: `ALKANES_RS=/path/to/alkanes-rs npm run build:bench:capped-opt`, then `npm run bench:capped-opt`. Rust fixtures are built by `npm run build:bench:capped` at the recorded upstream revision.\n';
+writeFileSync(resolve(root,output),report);console.log(report);

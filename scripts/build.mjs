@@ -17,6 +17,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { gzipSync } from "node:zlib";
 import { compileContract } from "../compiler/index.mjs";
 import { generateClient } from "../compiler/client.mjs";
+import { wordCallbacks, wordAdapter } from "../compiler/word-abi.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const bin = (name) => join(root, "node_modules", ".bin", name);
@@ -63,7 +64,7 @@ function buildContract(name) {
 
   const entry = join(work, "entry.ts");
   const importPath = (p) => "./" + relative(work, p).replaceAll("\\", "/");
-  const compiled = compileContract({ filename: source });
+  const compiled = compileContract({ filename: source, wordLowering: true });
   if (compiled) {
     writeFileSync(entry, compiled.lowered);
     writeFileSync(join(root, "dist", `${name}.abi.json`), compiled.abi + "\n");
@@ -85,13 +86,13 @@ export function meta(): Uint8Array {
 `,
   );
 
-  buildLibrary({ entry, work, out: join(root, "dist", `${name}.wasm`) });
+  buildLibrary({ entry, work, out: join(root, "dist", `${name}.wasm`), word: compiled?.word });
 }
 
 // The isolation fixtures use the production linker/optimizer, with additional
 // scalar exports and a benchmark-only hook into the adapter's init guard.
 export function buildLibrary({ entry, work, out, extraExports = [], benchmark = false,
-  compiler = bin("scriptc"), runtimePack }) {
+  compiler = bin("scriptc"), runtimePack, word = false }) {
   mkdirSync(work, { recursive: true });
   mkdirSync(dirname(out), { recursive: true });
   const profile = join(work, "profile.json");
@@ -109,9 +110,9 @@ export function buildLibrary({ entry, work, out, extraExports = [], benchmark = 
           sink_register_symbol: "contract_sink",
           callback_register_symbol: "contract_callback",
         },
-        callbacks: PROFILE_CALLBACKS,
+        callbacks: word ? wordCallbacks : PROFILE_CALLBACKS,
         exports: [
-          { export: "execute", symbol: "contract_execute", params: ["bytes"], returns: "bytes" },
+          { export: "execute", symbol: "contract_execute", params: ["bytes"], returns: word ? "f64" : "bytes" },
           { export: "meta", symbol: "contract_meta", params: [], returns: "bytes" },
           ...extraExports,
         ],
@@ -131,7 +132,16 @@ export function buildLibrary({ entry, work, out, extraExports = [], benchmark = 
   const adapter = join(work, "adapter.wasm");
   const wasi = join(work, "wasi.wasm");
   let adapterSource = join(root, "shim", "adapter.wat");
-  if (benchmark) {
+  if (word) {
+    adapterSource = join(work, "adapter.wat");
+    writeFileSync(adapterSource, wordAdapter());
+    run("zig", ["cc", "--target=wasm32-wasi", "-O3", "-flto", "-mbulk-memory", "-nostdlib", "-fno-stack-protector", "-Wl,--no-entry", "-Wl,--import-memory", "-Wl,--export=__stack_pointer", join(root,"shim/word.c"), "-o",join(work,"word.wasm")]);
+    run(bin("wasm-dis"),[...FEATURES,join(work,"word.wasm"),"-o",join(work,"word.wat")]);
+    const native=readFileSync(join(work,"word.wat"),"utf8");
+    if(native.split('(import "env" "memory"').length!==2||/^\s*\(data\b/m.test(native))throw new Error("word SDK requires imported memory and no static data segments");
+    writeFileSync(join(work,"word.wat"),native.replace('(import "env" "memory"','(import "contract" "memory"'));
+    run(bin("wasm-as"),[...FEATURES,join(work,"word.wat"),"-o",join(work,"word.wasm")]);
+  } else if (benchmark) {
     adapterSource = join(work, "adapter.wat");
     writeFileSync(adapterSource, readFileSync(join(root, "shim", "adapter.wat"), "utf8")
       .replace("(func $ensure_initialized", '(func $ensure_initialized (export "__bench_init")'));
@@ -145,6 +155,7 @@ export function buildLibrary({ entry, work, out, extraExports = [], benchmark = 
     compiled, "contract",
     adapter, "scriptc",
     wasi, "wasi_snapshot_preview1",
+    ...(word ? [join(work,"word.wasm"),"word"] : []),
     "-o", merged,
   ]);
 
@@ -164,7 +175,7 @@ export function buildLibrary({ entry, work, out, extraExports = [], benchmark = 
 
   const bytes = readFileSync(out);
   const module = new WebAssembly.Module(bytes);
-  const badImports = WebAssembly.Module.imports(module).filter((i) => i.module !== "env");
+  const badImports = WebAssembly.Module.imports(module).filter((i) => i.module !== "env" || i.kind !== "function");
   if (badImports.length > 0) {
     throw new Error(
       `unresolved imports: ${badImports.map((i) => `${i.module}.${i.name}`).join(", ")}`,

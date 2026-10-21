@@ -16,6 +16,8 @@
     "bench": "cargo run --quiet --release --manifest-path harness/Cargo.toml --bin bench --",
     "build:bench:rust": "node bench/build-rust.mjs",
     "build:bench:capped": "node bench/build-capped.mjs",
+    "build:bench:capped-opt": "node bench/build-capped-optimization.mjs",
+    "bench:capped-opt": "node bench/measure-capped-optimization.mjs",
     "test:runtime": "npm run build && npm run build:bench:capped && node integration/run.mjs",
     "bench:capped": "node integration/run.mjs --bench",
     "bench:speed": "node bench/measure-speed.mjs",

@@ -20,6 +20,8 @@ use std::{collections::BTreeMap, io::Cursor};
 use wasm_bindgen_test::wasm_bindgen_test;
 
 const TS: &[u8] = include_bytes!("./capped-token.wasm");
+#[cfg(feature = "baseline")]
+const BEFORE: &[u8] = include_bytes!("./capped-token-before.wasm");
 const RUST: &[u8] = include_bytes!("./rust-capped-token.wasm");
 const OPT: &[u8] = include_bytes!("./rust-capped-token-opt.wasm");
 const AUTH: &[u8] = include_bytes!("./auth.wasm");
@@ -27,6 +29,7 @@ const MOCK: &[u8] = include_bytes!("./test-auth.wasm");
 const INIT_PROBE: &[u8] = include_bytes!("./init-probe.wasm");
 const CACHE_CALLER: &[u8] = include_bytes!("./cache-caller.wasm");
 const CACHE_CALLEE: &[u8] = include_bytes!("./cache-callee.wasm");
+const WORD: &[u8] = include_bytes!("./word.wasm");
 fn token() -> AlkaneId {
     AlkaneId { block: 2, tx: 1 }
 }
@@ -384,17 +387,106 @@ fn successful_callbacks_invalidate_the_caller_storage_cache() {
     assert_eq!(storage(&token(), "/value"), 2u128.to_le_bytes());
 }
 
+#[wasm_bindgen_test]
+fn native_words_preserve_wide_values_checked_operations_and_self_auth() {
+    helpers::clear();
+    let wide = AlkaneId {
+        block: (1u128 << 127) + 0x1122334455667788,
+        tx: (1u128 << 96) + 123,
+    };
+    let deployment = block(
+        WORD,
+        cp(AlkaneId { block: 1, tx: 0 }, vec![0, wide.block, wide.tx]),
+        None,
+        880000,
+    );
+    assert!(index(&deployment, 880000).result.is_ok());
+    assert!(
+        storage(&token(), "/value").is_empty(),
+        "defaults must not write"
+    );
+    let read = block(&[], cp(token(), vec![3]), None, 880001);
+    assert_eq!(number(&index(&read, 880001).result.unwrap()), 17);
+    assert!(storage(&token(), "/value").is_empty());
+    let id = block(&[], cp(token(), vec![4]), None, 880002);
+    assert_eq!(
+        index(&id, 880002).result.unwrap().data,
+        Vec::<u8>::from(wide)
+    );
+    let maximum = block(&[], cp(token(), vec![1, u128::MAX - 17]), None, 880003);
+    assert_eq!(number(&index(&maximum, 880003).result.unwrap()), u128::MAX);
+    let overflow = block(&[], cp(token(), vec![1, 1]), None, 880004);
+    assert_revert(index(&overflow, 880004), "u128 overflow");
+    assert_eq!(storage(&token(), "/value"), u128::MAX.to_le_bytes());
+    let zero = block(&[], cp(token(), vec![2, u128::MAX]), None, 880005);
+    assert_eq!(number(&index(&zero, 880005).result.unwrap()), 0);
+    for (i, inputs, error) in [
+        (0, vec![2, 1], "u128 underflow"),
+        (1, vec![5], "word rollback"),
+        (2, vec![6], "u128 overflow"),
+    ] {
+        let failed = block(&[], cp(token(), inputs), None, 880006 + i);
+        assert_revert(index(&failed, 880006 + i), error);
+        assert_eq!(storage(&token(), "/value"), 0u128.to_le_bytes());
+    }
+    let high = block(&[], cp(token(), vec![1u128 << 127]), None, 880009);
+    assert_eq!(number(&index(&high, 880009).result.unwrap()), 42);
+    let unknown = block(&[], cp(token(), vec![u128::MAX]), None, 880010);
+    assert_revert(
+        index(&unknown, 880010),
+        &format!("Unrecognized opcode {}", u128::MAX),
+    );
+    for (i, flag) in [0, 1].into_iter().enumerate() {
+        let conditional = block(&[], cp(token(), vec![12, flag]), None, 880020 + i as u32);
+        assert_eq!(
+            number(&index(&conditional, 880020 + i as u32).result.unwrap()),
+            flag + 1
+        );
+    }
+    let forged = block(&[], cp(token(), vec![11, 2, 1]), None, 880022);
+    assert_revert(index(&forged, 880022), "AUTH_ASSET_REQUIRED");
+    assert_eq!(
+        balance(&forged, token()),
+        0,
+        "self issuance cannot satisfy auth proof"
+    );
+    let issued = block(&[], cp(token(), vec![9, 1]), None, 880023);
+    assert!(index(&issued, 880023).result.is_ok());
+    assert_eq!(balance(&issued, token()), 1);
+    let authenticated = block(
+        &[],
+        cp(token(), vec![8, 2, 1]),
+        Some(outpoint(&issued, 0)),
+        880024,
+    );
+    let execution = index(&authenticated, 880024);
+    assert!(execution.result.is_ok());
+    assert_eq!(balance(&authenticated, token()), 1);
+    assert_eq!(
+        execution
+            .events
+            .iter()
+            .filter(|e| matches!(e, TraceEvent::EnterCall(_)))
+            .count(),
+        1,
+        "self auth must not extcall"
+    );
+}
+
 #[cfg(feature = "benchmark")]
 #[wasm_bindgen_test]
 fn benchmark_capped_token() {
     let iterations: usize = include_str!("./iterations.txt").trim().parse().unwrap();
     const WARMUP: usize = 3;
     let mut reference: Option<Vec<(CallResponse, BTreeMap<String, Vec<u8>>)>> = None;
-    let variants = [
+    let mut reference_wide = None;
+    let mut variants = vec![
         ("typescript", TS),
         ("rust-o3-lto", RUST),
         ("rust-o3-lto-wasm-opt", OPT),
     ];
+    #[cfg(feature = "baseline")]
+    variants.push(("typescript-before", BEFORE));
     let mut samples = BTreeMap::<(&str, &str), Vec<(u64, f64)>>::new();
     for iteration in 0..iterations + WARMUP {
         // Rotate order to distribute warmup/thermal effects across variants.
@@ -425,6 +517,30 @@ fn benchmark_capped_token() {
                 assert_eq!(&outputs, baseline);
             } else {
                 reference = Some(outputs);
+            }
+            // A separate, reachable MAX-cap deployment prevents the numeric
+            // representation comparison from relying only on small values.
+            let (input, _) = setup(binary, None, u128::MAX);
+            let amount = (1u128 << 96) + 5;
+            let mut request = client("mint");
+            request.inputs[1] = amount;
+            let wide = block(&[], request, Some(input), 880002);
+            let executed = index(&wide, 880002);
+            if iteration >= WARMUP {
+                samples
+                    .entry((name, "mint+auth-wide"))
+                    .or_default()
+                    .push((executed.fuel, executed.micros));
+            }
+            let response = executed.result.unwrap();
+            assert_eq!(number(&response), amount);
+            assert_eq!(balance(&wide, token()), amount);
+            assert_eq!(balance(&wide, authority()), 2);
+            let output = (response, snapshot());
+            if let Some(ref baseline) = reference_wide {
+                assert_eq!(&output, baseline);
+            } else {
+                reference_wide = Some(output);
             }
         }
     }

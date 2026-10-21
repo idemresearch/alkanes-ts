@@ -4,6 +4,7 @@ import ts from "typescript";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { lowerWords } from "./word.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultSDK = resolve(root, "sdk");
@@ -13,7 +14,7 @@ const modifiers = (node) => (node.modifiers ?? []).filter((m) => !ts.isDecorator
 const decorators = (node) => ts.getDecorators(node) ?? [];
 const nameOf = (node) => ts.isIdentifier(node) ? node.text : undefined;
 
-export function compileContract({ filename, source = readFileSync(filename, "utf8"), sdkDirectory = defaultSDK }) {
+export function compileContract({ filename, source = readFileSync(filename, "utf8"), sdkDirectory = defaultSDK, wordLowering = false }) {
   filename = resolve(filename);
   const parsed = ts.createSourceFile(filename, source, ts.ScriptTarget.Latest, true);
   const contract = parsed.statements.find((s) => ts.isClassDeclaration(s) &&
@@ -450,5 +451,7 @@ function __alk_dispatch(context: __alk_Context): __alk_CallResponse {
 export function execute(context: Uint8Array): Uint8Array { return __alk_executeDispatch(__alk_dispatch, context); }
 export function meta(): Uint8Array { return __alk_utf8(${JSON.stringify(abi)}); }
 `;
-  return { lowered, abi, manifest };
+  const word=wordLowering?lowerWords({filename,source,manifest,abi,sdkDirectory}):null;
+  manifest.lowering=word?'word-v1':'bigint';
+  return { lowered:word??lowered, abi, manifest, word:!!word };
 }

@@ -30,6 +30,27 @@ fn write_ab(c: &mut Caller<'_, Host>, ptr: i32, bytes: &[u8]) -> i32 {
 
 fn linker(engine: &Engine) -> Result<Linker<Host>> {
     let mut l = Linker::new(engine);
+    l.func_wrap("env", "__fuel", |mut c: Caller<'_, Host>, out: i32| {
+        write_ab(&mut c, out, &u128::from(START_FUEL).to_le_bytes());
+    })?;
+    // CappedToken's startup probe links these imports but must never call them.
+    for name in ["__call", "__delegatecall", "__staticcall"] {
+        l.func_wrap(
+            "env",
+            name,
+            |mut c: Caller<'_, Host>, _: i32, _: i32, _: i32, _: i64| -> i32 {
+                c.data_mut().failed = true;
+                -1
+            },
+        )?;
+    }
+    l.func_wrap(
+        "env",
+        "__returndatacopy",
+        |mut c: Caller<'_, Host>, _: i32| {
+            c.data_mut().failed = true;
+        },
+    )?;
     l.func_wrap(
         "env",
         "abort",
