@@ -13,6 +13,8 @@
     "typecheck": "tsc --noEmit",
     "check:wasmi": "cargo run --quiet --release --manifest-path harness/Cargo.toml --bin wasmi-check --",
     "bench": "cargo run --quiet --release --manifest-path harness/Cargo.toml --bin bench --",
+    "build:bench:rust": "node bench/build-rust.mjs",
+    "bench:speed": "node bench/measure-speed.mjs",
     "build:bench:isolate": "node bench/build-isolation.mjs",
     "bench:isolate": "cargo run --quiet --release --manifest-path harness/Cargo.toml --bin isolate --",
     "build:bench:optimize": "node bench/build-optimization.mjs",

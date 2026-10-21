@@ -8,19 +8,20 @@
 //! median over all iterations. Results print as a Markdown report.
 //!
 //! Usage: bench [--iterations N] [--root DIR] [--no-grow]
+//!        [--rust-dir DIR] [--ts-dir DIR] [--filter TEXT]
 //!
 //! --no-grow skips the 512-page memory grow. wasmi zero-fills grown pages
 //! eagerly, which dominates instantiation time and makes first touches of
 //! that memory fault in, so this isolates the contracts' own execution cost.
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, ensure, Result};
 use flate2::{write::GzEncoder, Compression};
 use std::io::Write;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use wasmi::Module;
-use wasmi_check::{engine, AlkaneId, Outcome, World, START_FUEL};
+use wasmi_check::{engine, AlkaneId, Outcome, Response, World, WorldState, START_FUEL};
 
 const COUNTER: AlkaneId = (2, 1);
 const TOKEN: AlkaneId = (2, 2);
@@ -76,6 +77,8 @@ struct Measured {
     instantiate: Duration,
     execute: Duration,
     result: Result<Vec<u8>, String>,
+    response: Result<Response, String>,
+    state: WorldState,
 }
 
 fn run(world: &Rc<World>, call: Call) -> Outcome {
@@ -116,24 +119,26 @@ fn measure(imp: &Impl, scenario: &Scenario, iterations: usize, grow: bool) -> Re
     let start = world.snapshot();
     let mut instantiate = Vec::with_capacity(iterations);
     let mut execute = Vec::with_capacity(iterations);
-    let mut first: Option<(u64, Result<Vec<u8>, String>)> = None;
+    let mut first: Option<(u64, Result<Response, String>, WorldState)> = None;
     for _ in 0..iterations {
         world.restore(start.clone());
         let out = run(&world, scenario.call);
         let (i, e) = world.timing.get();
         instantiate.push(i);
         execute.push(e);
-        let result = out.result.map(|r| r.data);
+        let result = out.result;
+        let state = world.snapshot();
         match &first {
-            None => first = Some((out.fuel_used, result)),
-            Some((fuel, _)) if *fuel != out.fuel_used => {
-                return Err(anyhow!("{}: nondeterministic fuel in {}", imp.name, scenario.name));
+            None => first = Some((out.fuel_used, result, state)),
+            Some((fuel, previous, previous_state)) => {
+                ensure!(*fuel == out.fuel_used && *previous == result && *previous_state == state,
+                    "{}: nondeterministic fuel, response or storage in {}", imp.name, scenario.name);
             }
-            _ => {}
         }
     }
-    let (fuel, result) = first.unwrap();
-    Ok(Measured { fuel, instantiate: median(instantiate), execute: median(execute), result })
+    let (fuel, response, state) = first.unwrap();
+    let result = response.clone().map(|r| r.data);
+    Ok(Measured { fuel, instantiate: median(instantiate), execute: median(execute), result, response, state })
 }
 
 fn compile_time(engine: &wasmi::Engine, wasm: &[u8], iterations: usize) -> Result<Duration> {
@@ -171,21 +176,33 @@ fn main() -> Result<()> {
     let mut iterations = 200usize;
     let mut root = PathBuf::from(".");
     let mut grow = true;
+    let mut rust_dir = None;
+    let mut ts_dir = None;
+    let mut filter = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--iterations" => iterations = args.next().ok_or(anyhow!("--iterations N"))?.parse()?,
             "--root" => root = PathBuf::from(args.next().ok_or(anyhow!("--root DIR"))?),
             "--no-grow" => grow = false,
+            "--rust-dir" => rust_dir = Some(PathBuf::from(args.next().ok_or(anyhow!("--rust-dir DIR"))?)),
+            "--ts-dir" => ts_dir = Some(PathBuf::from(args.next().ok_or(anyhow!("--ts-dir DIR"))?)),
+            "--filter" => filter = Some(args.next().ok_or(anyhow!("--filter TEXT"))?),
             other => return Err(anyhow!("unknown argument {other}")),
         }
     }
+    ensure!(iterations > 0, "iterations must be positive");
+    if let Some(text) = &filter {
+        ensure!(SCENARIOS.iter().any(|s| s.name.contains(text)), "filter matches no scenarios");
+    }
+    let rust_dir = rust_dir.unwrap_or_else(|| root.join("bench/dist"));
+    let ts_dir = ts_dir.unwrap_or_else(|| root.join("dist"));
     let rust = Impl {
         name: "alkanes-rs",
-        counter: root.join("bench/dist/rust-counter.wasm"),
-        token: root.join("bench/dist/rust-token.wasm"),
+        counter: rust_dir.join("rust-counter.wasm"),
+        token: rust_dir.join("rust-token.wasm"),
     };
-    let ts = Impl { name: "alkanes-ts", counter: root.join("dist/counter.wasm"), token: root.join("dist/token.wasm") };
+    let ts = Impl { name: "alkanes-ts", counter: ts_dir.join("counter.wasm"), token: ts_dir.join("token.wasm") };
 
     println!("## Binary size and compile time\n");
     println!("Compile time is the median `Module::new` over {iterations} runs.\n");
@@ -217,14 +234,16 @@ fn main() -> Result<()> {
     println!("| scenario | rs fuel | ts fuel | ratio | rs exec µs | ts exec µs | ratio | rs inst µs | ts inst µs | result |");
     println!("|---|---:|---:|---:|---:|---:|---:|---:|---:|---|");
     let mut mismatches = Vec::new();
-    for s in SCENARIOS {
+    for s in SCENARIOS.iter().filter(|s| filter.as_ref().is_none_or(|text| s.name.contains(text))) {
         let r = measure(&rust, s, iterations, grow)?;
         let t = measure(&ts, s, iterations, grow)?;
         let same = match (&r.result, &t.result) {
-            (Ok(a), Ok(b)) => a == b || (a.starts_with(b"{") && b.starts_with(b"{")),
-            (Err(_), Err(_)) => true,
+            (Ok(a), Ok(b)) => (r.response == t.response) ||
+                (matches!(s.call, Call::Meta(_)) && a.starts_with(b"{") && b.starts_with(b"{")),
+            (Err(a), Err(b)) => a == b || (s.name == "counter unknown opcode" &&
+                a == "Error: Unrecognized opcode" && b == "Error: Unrecognized opcode 99"),
             _ => false,
-        };
+        } && r.state == t.state;
         let result = if same && describe(&r.result) == describe(&t.result) {
             describe(&r.result)
         } else {

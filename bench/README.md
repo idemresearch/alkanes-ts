@@ -1,6 +1,6 @@
 # alkanes-rs vs alkanes-ts benchmark
 
-This compares the TypeScript contracts in `contracts/` with Rust twins written against `alkanes-runtime`. Both run on the same alkanes host model built on wasmi 0.37.2, the engine and version the indexer uses.
+This compares the TypeScript contracts in `contracts/` with Rust twins written against `alkanes-runtime`. Both run on the same alkanes host model built on wasmi 0.37.2, the engine and version the indexer uses. The tables below are historical; see the [current speed comparison](SPEED.md) and [200-run results](SPEED_RESULTS.md) for the optimized SDK and the matched Rust numeric fast path.
 
 For paired measurements separating initialization, arithmetic, byte encoding, host transport and SDK storage handling, see [fuel isolation](ISOLATION.md) and its [saved results](ISOLATION_RESULTS.md). Run it independently with `npm run build:bench:isolate` followed by `npm run bench:isolate`.
 
@@ -8,7 +8,7 @@ For paired measurements separating initialization, arithmetic, byte encoding, ho
 
 The codec improvements are now applied to the production SDK. The [current production report](SDK_OPTIMIZATION_RESULTS.md) compares real counter/token contracts against the preserved legacy codecs using scriptc 0.4.0. Reproduce with `npm run build`, `npm run build:bench:optimize`, and `npm run bench:sdk`.
 
-The [latest incremental report](NEXT_OPTIMIZATION_RESULTS.md) compares against commit `0a1dd35`, before replacing the hex lookup table and u32 DataView writes. The [current SDK probe report](SDK_PROBE_RESULTS.md) separates warm encoding, serialization, arithmetic and host-copy workloads.
+The [codec follow-up report](NEXT_OPTIMIZATION_RESULTS.md) records the change from `0a1dd35` to `588dda7`, replacing the hex lookup table and u32 DataView writes. The [execution report](EXECUTION_RESULTS.md) compares against `588dda7`, before direct opcode dispatch and the exact numeric sum path. The [current SDK probe report](SDK_PROBE_RESULTS.md) separates warm encoding, serialization, arithmetic and host-copy workloads.
 
 ## Setup
 

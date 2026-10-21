@@ -168,8 +168,9 @@ export function buildLibrary({ entry, work, out, extraExports = [], benchmark = 
   if (exports.join(",") !== expected.join(",")) {
     throw new Error(`unexpected exports: ${exports.join(", ")}`);
   }
-  writeFileSync(`${out}.gz`, gzipSync(bytes, { level: 9 }));
-  console.log(`${relative(root, out)}  ${bytes.length} bytes (${gzipSync(bytes).length} gzipped)`);
+  const compressed = gzipSync(bytes, { level: 9 });
+  writeFileSync(`${out}.gz`, compressed);
+  console.log(`${relative(root, out)}  ${bytes.length} bytes (${compressed.length} gzipped)`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

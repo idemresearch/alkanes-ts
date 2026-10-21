@@ -51,19 +51,21 @@ The compiler, `@scriptc/runtime-wasm32-wasi`, and `@scriptc/types` are pinned to
 
 The SDK uses arithmetic ASCII hex encoding, two-limb u128 codecs and direct u32 byte writes. See the [production before/after fuel report](bench/SDK_OPTIMIZATION_RESULTS.md) for the measured savings against the previous codecs.
 
+The latest pass also removes string-keyed opcode dispatch and adds an exact numeric fast path to the counter's sum loop. The [speed comparison](bench/SPEED.md) measures both fuel and execution time against Rust, including a Rust build given the same numeric optimization.
+
 ```console
 $ npm install
 $ npm run build              # every contract in contracts/, or: npm run build -- counter
-dist/counter.wasm  269888 bytes (115226 gzipped)
-dist/token.wasm  273559 bytes (116213 gzipped)
+dist/counter.wasm  271240 bytes (115671 gzipped)
+dist/token.wasm  274091 bytes (116115 gzipped)
 $ npm test                   # contracts against test/vm.mjs, a JS model of the alkanes host
 $ npm run check:wasmi -- dist/counter.wasm --meta 0 1,5 2 3
-loaded dist/counter.wasm (269888 bytes) under wasmi 0.37.2
-__meta  fuel=52744     { "contract": "Counter", ... }
-[0]  fuel=66493     ok alkanes=0 data=
-[1,5]  fuel=63893     ok alkanes=0 data=05000000000000000000000000000000 u128=5
-[2]  fuel=60919     ok alkanes=0 data=05000000000000000000000000000000 u128=5
-[3]  fuel=68713     REVERT "Error: intentional failure"
+loaded dist/counter.wasm (271240 bytes) under wasmi 0.37.2
+__meta  fuel=47411     { "contract": "Counter", ... }
+[0]  fuel=61495     ok alkanes=0 data=
+[1,5]  fuel=58794     ok alkanes=0 data=05000000000000000000000000000000 u128=5
+[2]  fuel=55658     ok alkanes=0 data=05000000000000000000000000000000 u128=5
+[3]  fuel=63284     REVERT "Error: intentional failure"
 ```
 
 Each argument to `check:wasmi` is one call, given as comma-separated u128 inputs with the opcode first. Storage persists between calls.
@@ -79,8 +81,9 @@ To add a contract, create `contracts/<name>/index.ts` with a default-exported `C
 
 - **What compiles:** scriptc handled everything the SDK needed, including classes, closures, `bigint` arithmetic for u128, `Map`, `Uint8Array`, `DataView`, `TextEncoder`/`TextDecoder`, `JSON.stringify` and try/catch. Two rough edges: `number.toString(radix)` is refused, and indexing a `bigint[]` is typed `bigint | undefined`, which is why handlers get an `Inputs` wrapper.
 - **Engine compatibility:** the output uses only bulk-memory, sign-ext, saturating float-to-int and mutable globals, all supported by wasmi 0.37 (no SIMD). The build pins wasm-opt to those features.
-- **Size:** about 270–274 KB raw and 115–116 KB gzipped for these examples, including the scriptc runtime.
-- **Fuel:** the optimized example reads, initialization, increment and mint calls use about 54K–76K fuel. The [production before/after report](bench/SDK_OPTIMIZATION_RESULTS.md) measures 51–66% savings on these calls and 84% on 1,000 storage writes. Bigint-heavy loops remain expensive. The [Rust comparison](bench/README.md) and [initial isolation report](bench/ISOLATION.md) record the older SDK, before these codec changes.
+- **Size:** about 271–274 KB raw and 116 KB gzipped for these examples, including the scriptc runtime.
+- **Fuel:** the optimized example reads, initialization, increment and mint calls use about 49K–72K fuel. The [codec before/after report](bench/SDK_OPTIMIZATION_RESULTS.md) measures 53–67% savings on these calls and 84% on 1,000 storage writes, using the current dispatch on both sides. The [execution report](bench/EXECUTION_RESULTS.md) measures the additional dispatch and numeric-loop changes against `588dda7`. Bigint-heavy loops remain expensive; the counter sum uses exact numbers only within a proven bound.
+- **Execution speed:** the [current Rust comparison](bench/SPEED_RESULTS.md) includes original and matched numeric Rust builds. The numeric sum beats the original u128 Rust loop at n=10,000; equally optimized Rust and ordinary Rust calls remain faster in wall time. Lower TS fuel on storage writes does not imply lower CPU time. The [older Rust tables](bench/README.md) and [initial isolation report](bench/ISOLATION.md) remain historical records.
 - **Host reads cost one callback per 4 bytes.** That is cheap for storage values but would add up for `transaction()`/`block()` on large blocks.
 - **Determinism** needs a proper audit before anything holds value. Known so far: floats in wasmi are software-deterministic, `Map` iteration is insertion-ordered, the clock reads 0, and randomness traps. Not yet audited: the rest of the scriptc runtime, such as hashing and GC timing.
 - **Not covered by tests yet:** deployment through an envelope on a real indexer, alkane balance enforcement (the JS VM doesn't model it), and `delegatecall`/`staticcall` beyond the JS model.

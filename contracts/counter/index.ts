@@ -28,6 +28,15 @@ export default new Contract("Counter")
   // Benchmark workloads: u128 arithmetic in a loop, and many storage writes.
   .method(5, "sum", [param("n")], "u128", (_ctx, args) => {
     const n = args.u128(0);
+    // For n <= 300,000 every square and partial sum is an exact integer below
+    // 2^53. Keep the same loop, using native numeric arithmetic within that
+    // proven range and converting only the final result to the u128 ABI.
+    if (n <= 300_000n) {
+      const bound = Number(n) | 0;
+      let total = 0;
+      for (let i = 0; i < bound; i = (i + 1) | 0) total += i * i;
+      return new CallResponse().withU128(BigInt(total));
+    }
     let total = 0n;
     for (let i = 0n; i < n; i++) total = checkedAdd(total, i * i);
     return new CallResponse().withU128(total);

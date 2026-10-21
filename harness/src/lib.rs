@@ -27,7 +27,7 @@ pub fn engine() -> Engine {
     Engine::new(&config)
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct WorldState {
     storage: HashMap<AlkaneId, Storage>,
 }

@@ -72,6 +72,15 @@ test("counter: u128 arithmetic is exact and checked", () => {
   assert.throws(() => vm.call({ target: COUNTER, inputs: [1, 1n << 127n] }), /u128 overflow/);
 });
 
+test("counter: numeric sum fast path and bigint fallback return exact u128 sums", () => {
+  const vm = setup();
+  for (const n of [0n, 1n, 2n, 99n, 100n, 10_000n, 299_999n, 300_000n, 300_001n]) {
+    const expected = n * (n - 1n) * (2n * n - 1n) / 6n;
+    const result = vm.call({ target: COUNTER, inputs: [5, n] });
+    assert.equal(u128.decode(result.data), expected, `sum(${n})`);
+  }
+});
+
 test("counter: reads block height and logs through the host", () => {
   const vm = setup();
   assert.equal(u128.decode(vm.call({ target: COUNTER, inputs: [4] }).data), 900123n);

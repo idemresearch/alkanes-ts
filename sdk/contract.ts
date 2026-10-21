@@ -54,7 +54,6 @@ export class Method {
 }
 
 export class Contract {
-  private readonly methods = new Map<string, Method>();
   private readonly order: Method[] = [];
   private fallbackHandler: Handler | null = null;
 
@@ -62,7 +61,6 @@ export class Contract {
 
   method(opcode: number, name: string, params: Param[], returns: string, handler: Handler): Contract {
     const m = new Method(BigInt(opcode), name, params, returns, handler);
-    this.methods.set(m.opcode.toString(), m);
     this.order.push(m);
     return this;
   }
@@ -76,12 +74,17 @@ export class Contract {
     if (ctx.inputs.length === 0) throw new Error("No opcode provided");
     const opcode = ctx.inputs[0];
     const args = new Inputs(ctx.inputs.slice(1));
-    const m = this.methods.get(opcode.toString());
-    if (m !== undefined) {
-      if (args.length < m.params.length) {
-        throw new Error(m.name + " expects " + m.params.length.toString() + " inputs");
+    // Contracts usually expose a handful of methods. Comparing their integer
+    // opcodes avoids allocating decimal strings and building a map per instance.
+    // Walk backwards so registering an opcode again retains last-handler wins.
+    for (let i = this.order.length - 1; i >= 0; i--) {
+      const m = this.order[i];
+      if (m.opcode === opcode) {
+        if (args.length < m.params.length) {
+          throw new Error(m.name + " expects " + m.params.length.toString() + " inputs");
+        }
+        return m.handler(ctx, args);
       }
-      return m.handler(ctx, args);
     }
     const fallback = this.fallbackHandler;
     if (fallback !== null) return fallback(ctx, args);

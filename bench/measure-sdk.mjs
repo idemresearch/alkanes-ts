@@ -53,13 +53,13 @@ function measure(path, inputs) {
   return reference;
 }
 
-let report = `# Production SDK codec optimization\n\nscriptc/runtime ${version}; wasmi 0.37.2 with the host's 512-page memory setup. Each contract call sequence is repeated ${iterations} times from a fresh world. All response data, ABI text, expected revert messages and fuel counts are checked. Fuel excludes production host surcharges; no wall-clock claims.\n\n`;
+let report = `# Production SDK optimization\n\nscriptc/runtime ${version}; wasmi 0.37.2 with the host's 512-page memory setup. Each contract call sequence is repeated ${iterations} times from a fresh world. All response data, ABI text, expected revert messages and fuel counts are checked. Fuel excludes production host surcharges; no wall-clock claims.\n\n`;
 for (const [contract, inputs] of Object.entries(workloads)) {
   const before = join(baselineRoot, `${contract}.wasm`);
   const after = join(root, "dist", `${contract}.wasm`);
   const baseline = measure(before, inputs);
   const production = measure(after, inputs);
-  assert.deepEqual(production.map(({ call, result }) => ({ call, result })), baseline.map(({ call, result }) => ({ call, result })), `${contract}: codec results changed`);
+  assert.deepEqual(production.map(({ call, result }) => ({ call, result })), baseline.map(({ call, result }) => ({ call, result })), `${contract}: results changed`);
   report += `## ${contract}\n\n| call | ${baselineLabel} fuel | production fuel | reduction |\n|---|---:|---:|---:|\n`;
   for (let i = 0; i < baseline.length; i++) {
     const old = baseline[i];
@@ -74,7 +74,7 @@ for (const [contract, inputs] of Object.entries(workloads)) {
 }
 report += "Counter calls: initialize (0), increment by 5 (1,5), read (2), expected write-then-revert (3), sum of squares (5,10000), fill 1,000 storage entries (6,1000). Token calls: initialize supply 1,000 (0,1000), mint 50 (77,50), name (99), symbol (100), supply (101).\n\n";
 report += baselineDirectory
-  ? "Reference binaries were supplied with `--baseline`; their hashes are recorded above. Use `npm run bench:sdk -- --baseline <directory-with-reference-wasm> --output bench/NEXT_OPTIMIZATION_RESULTS.md`.\n"
+  ? `Reference binaries were supplied with \`--baseline\`; their hashes are recorded above. Use \`npm run bench:sdk -- --baseline <directory-with-reference-wasm> --output ${output ?? "bench/COMPARISON_RESULTS.md"}\`.\n`
   : "Reproduce: `npm run build`, `npm run build:bench:optimize`, then `npm run bench:sdk -- --output bench/SDK_OPTIMIZATION_RESULTS.md`. The legacy fixture preserves the prior algorithms; it is not used by production contracts.\n";
 if (output) writeFileSync(resolve(root, output), report);
 process.stdout.write(report);
