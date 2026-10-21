@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { resolve } from "node:path";
 import { AlkanesVM, u128 } from "./vm.mjs";
 
-const wasm = (name) => readFileSync(new URL(`../dist/${name}.wasm`, import.meta.url));
+const wasm = (name) => readFileSync(process.env.ALKANES_DIST
+  ? resolve(process.env.ALKANES_DIST, `${name}.wasm`)
+  : new URL(`../dist/${name}.wasm`, import.meta.url));
 const text = (bytes) => Buffer.from(bytes).toString("utf8");
 
 const COUNTER = { block: 2n, tx: 1n };

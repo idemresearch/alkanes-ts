@@ -12,12 +12,22 @@
     "test": "node --test test/*.test.mjs",
     "typecheck": "tsc --noEmit",
     "check:wasmi": "cargo run --quiet --release --manifest-path harness/Cargo.toml --bin wasmi-check --",
-    "bench": "cargo run --quiet --release --manifest-path harness/Cargo.toml --bin bench --"
+    "bench": "cargo run --quiet --release --manifest-path harness/Cargo.toml --bin bench --",
+    "build:bench:isolate": "node bench/build-isolation.mjs",
+    "bench:isolate": "cargo run --quiet --release --manifest-path harness/Cargo.toml --bin isolate --",
+    "build:bench:optimize": "node bench/build-optimization.mjs",
+    "bench:optimize": "cargo run --quiet --release --manifest-path harness/Cargo.toml --bin optimize --",
+    "test:bench:optimize": "node --test test/bytes.test.mjs",
+    "bench:sdk": "node bench/measure-sdk.mjs"
   },
   "devDependencies": {
-    "@scriptc/runtime-wasm32-wasi": "0.3.6",
+    "@scriptc/runtime-wasm32-wasi": "0.4.0",
+    "@scriptc/types": "0.4.0",
     "binaryen": "^125.0.0",
-    "scriptc": "0.3.6",
+    "scriptc": "0.4.0",
     "typescript": "^5.9.3"
+  },
+  "allowScripts": {
+    "scriptc@0.4.0": true
   }
 }

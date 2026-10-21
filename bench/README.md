@@ -2,11 +2,17 @@
 
 This compares the TypeScript contracts in `contracts/` with Rust twins written against `alkanes-runtime`. Both run on the same alkanes host model built on wasmi 0.37.2, the engine and version the indexer uses.
 
+For paired measurements separating initialization, arithmetic, byte encoding, host transport and SDK storage handling, see [fuel isolation](ISOLATION.md) and its [saved results](ISOLATION_RESULTS.md). Run it independently with `npm run build:bench:isolate` followed by `npm run bench:isolate`.
+
+[Optimization experiments](OPTIMIZATION.md) compare scriptc 0.3.6/0.4.0, compiler contract annotations, and faster SDK codecs without a compiler fork. Run `npm run build:bench:optimize` followed by `npm run bench:optimize`.
+
+The codec improvements are now applied to the production SDK. The [current production report](SDK_OPTIMIZATION_RESULTS.md) compares real counter/token contracts against the preserved legacy codecs using scriptc 0.4.0. Reproduce with `npm run build`, `npm run build:bench:optimize`, and `npm run bench:sdk`.
+
 ## Setup
 
 - **Contracts:** `bench/rust/{counter,token}` reimplement `contracts/{counter,token}` with `alkanes-runtime`, using the same opcodes, storage keys, revert messages and responses. They are ports written for this benchmark, not upstream std contracts. The counter has two scaling workloads: `sum(n)` (Σi² over u128) and `fill(n)` (n storage writes).
 - **Rust build:** run inside an alkanes-rs checkout (commit `18764c8`) as workspace members, with its pinned toolchain (rustc 1.86.0), Cargo.lock and release profile (`lto = "fat"`, `codegen-units = 1`). This is how alkanes-rs builds its std contracts, with no wasm-opt pass.
-- **TypeScript build:** scriptc 0.3.6 through `scripts/build.mjs`, including binaryen `-Oz`.
+- **TypeScript build for the results below:** scriptc 0.3.6 through `scripts/build.mjs`, including binaryen `-Oz`. The project now pins 0.4.0; reruns record the current toolchain in the isolation and optimization reports.
 - **Host:** `harness/src/lib.rs`. Fuel metering is on, there is no start function, every call gets a fresh instance, storage commits on success, and extcalls run nested with the callee's fuel charged to the caller. The per-byte fuel surcharges that the real host adds to host functions are not modeled. Both implementations call the same host functions, so those surcharges would add roughly the same absolute amount to each.
 - **Machine:** a 4-vCPU Linux cloud container running wasmi natively. Timings are medians of 200 runs. Fuel was identical across runs.
 
@@ -71,9 +77,9 @@ This comes from how the host grows memory, not from either compiler. The product
 ## Takeaways
 
 - **Typical calls cost 3–5× the fuel in TypeScript** (about 150K–270K vs 30K–90K). That is still well under the 3.5M minimum fuel a message gets on mainnet.
-- **There is a fixed overhead of about 50K fuel per call.** `__meta` does almost no work: 58K fuel in TS vs 6K in Rust. Most of that is scriptc's runtime initialization, which runs on every call because each call gets a fresh instance.
+- **The roughly 50K extra fuel in `__meta` is not a direct initialization measurement.** It includes contract initialization and ABI generation/formatting. The [isolation suite](ISOLATION.md) measures initialization explicitly: 3,581 fuel for its SDK-free scriptc fixture and 18,414 for its SDK probe module. These are module-specific, not universal per-call costs.
 - **u128 math is the weakest spot, at 15× the fuel and 18× the time.** `bigint` has no fixed width, so `sum(10,000)` costs 8.2M fuel vs 0.53M. Code that does heavy u128 arithmetic would need a fixed-width representation in the SDK.
-- **Storage-heavy work costs 5× the fuel.** Contributors include the SDK's hex-string-keyed write cache and reading host results back 4 bytes per callback.
+- **Storage-heavy work costs 5× the fuel.** The [paired storage probes](ISOLATION_RESULTS.md) point primarily to hex-string key construction; copying small host results through the four-byte callback is much cheaper in isolation.
 - **Wall-clock execution is worse than the fuel ratio suggests,** about 8–14× on typical calls. So for TS code, fuel understates real CPU cost relative to Rust. wasmi charges bulk memory ops only 1 fuel per 64 bytes, and TS code runs more indirect and runtime calls per unit of fuel. I haven't profiled which of these dominates.
 - **Binaries are 1.5–1.8× larger and take 2.2–2.3× longer to compile.** The indexer caches compiled modules, so compile time is a one-time cost per block.
 

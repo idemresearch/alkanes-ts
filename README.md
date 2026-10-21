@@ -47,19 +47,23 @@ Reverts follow `alkanes-runtime`: a thrown `Error` calls `env.abort` and returns
 
 Requirements: Node.js 24+, [Zig](https://ziglang.org) 0.16 on `PATH` (scriptc uses it to link Wasm), and Rust only for the wasmi check.
 
+The compiler, `@scriptc/runtime-wasm32-wasi`, and `@scriptc/types` are pinned together at **0.4.0**. Saved benchmark reports record the toolchain used for each measurement.
+
+The SDK uses bulk ASCII hex encoding and two-limb u128 codecs. See the [production before/after fuel report](bench/SDK_OPTIMIZATION_RESULTS.md) for the measured savings against the previous codecs.
+
 ```console
 $ npm install
 $ npm run build              # every contract in contracts/, or: npm run build -- counter
-dist/counter.wasm  258811 bytes (111221 gzipped)
-dist/token.wasm  264506 bytes (112856 gzipped)
+dist/counter.wasm  271766 bytes (115954 gzipped)
+dist/token.wasm  275456 bytes (116915 gzipped)
 $ npm test                   # contracts against test/vm.mjs, a JS model of the alkanes host
 $ npm run check:wasmi -- dist/counter.wasm --meta 0 1,5 2 3
-loaded dist/counter.wasm (258811 bytes) under wasmi 0.37.2
-__meta  fuel=45136     { "contract": "Counter", ... }
-[0]  fuel=233696    ok alkanes=0 data=
-[1,5]  fuel=197575    ok alkanes=0 data=05000000000000000000000000000000 u128=5
-[2]  fuel=185526    ok alkanes=0 data=05000000000000000000000000000000 u128=5
-[3]  fuel=206765    REVERT "Error: intentional failure"
+loaded dist/counter.wasm (271766 bytes) under wasmi 0.37.2
+__meta  fuel=54846     { "contract": "Counter", ... }
+[0]  fuel=73143     ok alkanes=0 data=
+[1,5]  fuel=68684     ok alkanes=0 data=05000000000000000000000000000000 u128=5
+[2]  fuel=63935     ok alkanes=0 data=05000000000000000000000000000000 u128=5
+[3]  fuel=71782     REVERT "Error: intentional failure"
 ```
 
 Each argument to `check:wasmi` is one call, given as comma-separated u128 inputs with the opcode first. Storage persists between calls.
@@ -75,8 +79,8 @@ To add a contract, create `contracts/<name>/index.ts` with a default-exported `C
 
 - **What compiles:** scriptc handled everything the SDK needed, including classes, closures, `bigint` arithmetic for u128, `Map`, `Uint8Array`, `DataView`, `TextEncoder`/`TextDecoder`, `JSON.stringify` and try/catch. Two rough edges: `number.toString(radix)` is refused, and indexing a `bigint[]` is typed `bigint | undefined`, which is why handlers get an `Inputs` wrapper.
 - **Engine compatibility:** the output uses only bulk-memory, sign-ext, saturating float-to-int and mutable globals, all supported by wasmi 0.37 (no SIMD). The build pins wasm-opt to those features.
-- **Size:** about 260 KB raw and 112 KB gzipped, most of it the scriptc runtime. Typical Rust alkanes are in the same range.
-- **Fuel:** about 150K–270K per call, 3–5× an equivalent Rust contract, against a per-message minimum of 3.5M on mainnet. See [bench/](bench/README.md) for the full comparison with alkanes-rs.
+- **Size:** about 272–275 KB raw and 116–117 KB gzipped for these examples, including the scriptc runtime.
+- **Fuel:** the optimized example reads, initialization, increment and mint calls use about 57K–83K fuel. The [production before/after report](bench/SDK_OPTIMIZATION_RESULTS.md) measures 48–63% savings on these calls and 81% on 1,000 storage writes. Bigint-heavy loops remain expensive. The [Rust comparison](bench/README.md) and [initial isolation report](bench/ISOLATION.md) record the older SDK, before these codec changes.
 - **Host reads cost one callback per 4 bytes.** That is cheap for storage values but would add up for `transaction()`/`block()` on large blocks.
 - **Determinism** needs a proper audit before anything holds value. Known so far: floats in wasmi are software-deterministic, `Map` iteration is insertion-ordered, the clock reads 0, and randomness traps. Not yet audited: the rest of the scriptc runtime, such as hashing and GC timing.
 - **Not covered by tests yet:** deployment through an envelope on a real indexer, alkane balance enforcement (the JS VM doesn't model it), and `delegatecall`/`staticcall` beyond the JS model.

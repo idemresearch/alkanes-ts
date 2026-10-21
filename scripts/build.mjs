@@ -13,7 +13,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { gzipSync } from "node:zlib";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -77,6 +77,15 @@ export function meta(): Uint8Array {
 `,
   );
 
+  buildLibrary({ entry, work, out: join(root, "dist", `${name}.wasm`) });
+}
+
+// The isolation fixtures use the production linker/optimizer, with additional
+// scalar exports and a benchmark-only hook into the adapter's init guard.
+export function buildLibrary({ entry, work, out, extraExports = [], benchmark = false,
+  compiler = bin("scriptc"), runtimePack }) {
+  mkdirSync(work, { recursive: true });
+  mkdirSync(dirname(out), { recursive: true });
   const profile = join(work, "profile.json");
   writeFileSync(
     profile,
@@ -84,7 +93,7 @@ export function meta(): Uint8Array {
       {
         profile_format: 1,
         name: "contract",
-        entry: "entry.ts",
+        entry: relative(work, entry),
         emission: "llvm",
         abi: {
           prefix: "contract_",
@@ -96,6 +105,7 @@ export function meta(): Uint8Array {
         exports: [
           { export: "execute", symbol: "contract_execute", params: ["bytes"], returns: "bytes" },
           { export: "meta", symbol: "contract_meta", params: [], returns: "bytes" },
+          ...extraExports,
         ],
       },
       null,
@@ -104,14 +114,21 @@ export function meta(): Uint8Array {
   );
 
   const compiled = join(work, "contract.wasm");
-  run(bin("scriptc"), ["build", "--lib", "--profile", profile, "-o", compiled], {
+  run(compiler, ["build", "--lib", "--profile", profile, "-o", compiled], {
     ...process.env,
     SCRIPTC_TARGET: "wasm32-wasi",
+    ...(runtimePack ? { SCRIPTC_RUNTIME_PACK: runtimePack } : {}),
   });
 
   const adapter = join(work, "adapter.wasm");
   const wasi = join(work, "wasi.wasm");
-  run(bin("wasm-as"), [...FEATURES, join(root, "shim", "adapter.wat"), "-o", adapter]);
+  let adapterSource = join(root, "shim", "adapter.wat");
+  if (benchmark) {
+    adapterSource = join(work, "adapter.wat");
+    writeFileSync(adapterSource, readFileSync(join(root, "shim", "adapter.wat"), "utf8")
+      .replace("(func $ensure_initialized", '(func $ensure_initialized (export "__bench_init")'));
+  }
+  run(bin("wasm-as"), [...FEATURES, adapterSource, "-o", adapter]);
   run(bin("wasm-as"), [...FEATURES, join(root, "shim", "wasi.wat"), "-o", wasi]);
 
   const merged = join(work, "merged.wasm");
@@ -127,13 +144,14 @@ export function meta(): Uint8Array {
   writeFileSync(
     graph,
     JSON.stringify(
-      ["memory", "__execute", "__meta"].map((e) => ({ name: e, root: true, export: e })),
+      ["memory", "__execute", "__meta", ...extraExports.map((e) => e.symbol),
+        ...(benchmark ? ["__bench_init"] : [])]
+        .map((e) => ({ name: e, root: true, export: e })),
     ),
   );
   const reduced = join(work, "reduced.wasm");
   run(bin("wasm-metadce"), [...FEATURES, merged, "--graph-file", graph, "-o", reduced]);
 
-  const out = join(root, "dist", `${name}.wasm`);
   run(bin("wasm-opt"), [...FEATURES, "-Oz", "--strip-debug", "--strip-producers", reduced, "-o", out]);
 
   const bytes = readFileSync(out);
@@ -145,13 +163,17 @@ export function meta(): Uint8Array {
     );
   }
   const exports = WebAssembly.Module.exports(module).map((e) => e.name).sort();
-  if (exports.join(",") !== "__execute,__meta,memory") {
+  const expected = ["__execute", "__meta", "memory", ...extraExports.map((e) => e.symbol),
+    ...(benchmark ? ["__bench_init"] : [])].sort();
+  if (exports.join(",") !== expected.join(",")) {
     throw new Error(`unexpected exports: ${exports.join(", ")}`);
   }
   writeFileSync(`${out}.gz`, gzipSync(bytes, { level: 9 }));
   console.log(`${relative(root, out)}  ${bytes.length} bytes (${gzipSync(bytes).length} gzipped)`);
 }
 
-const names = process.argv.slice(2);
-const targets = names.length > 0 ? names : readdirSync(join(root, "contracts"));
-for (const name of targets) buildContract(name);
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  const names = process.argv.slice(2);
+  const targets = names.length > 0 ? names : readdirSync(join(root, "contracts"));
+  for (const name of targets) buildContract(name);
+}
