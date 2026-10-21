@@ -8,9 +8,10 @@ function replaceOnce(source, before, after) {
   return source.replace(before, after);
 }
 
-function declaration(source, predicate) {
+function declaration(source, predicate, required = true) {
   const file = ts.createSourceFile("bytes.ts", source, ts.ScriptTarget.ES2022, true);
   const nodes = file.statements.filter(predicate);
+  if (!required && nodes.length === 0) return null;
   if (nodes.length !== 1) throw new Error("codec fixture declaration changed");
   return { start: nodes[0].getStart(file), end: nodes[0].end, text: nodes[0].getText(file) };
 }
@@ -21,10 +22,16 @@ function legacyCodecs(source, reference) {
     const current = declaration(source, matches);
     source = source.slice(0, current.start) + declaration(reference, matches).text + source.slice(current.end);
   }
+  const writer = (node) => ts.isClassDeclaration(node) && node.name?.text === "ByteWriter";
+  const currentWriter = declaration(source, writer);
+  source = source.slice(0, currentWriter.start) + declaration(reference, writer).text + source.slice(currentWriter.end);
   const variable = (name) => (node) => ts.isVariableStatement(node)
     && node.declarationList.declarations.some((d) => ts.isIdentifier(d.name) && d.name.text === name);
-  const ascii = declaration(source, variable("HEX_ASCII"));
-  return source.slice(0, ascii.start) + declaration(reference, variable("HEX")).text + source.slice(ascii.end);
+  const ascii = declaration(source, variable("HEX_ASCII"), false);
+  const hex = declaration(reference, variable("HEX")).text;
+  if (ascii) return source.slice(0, ascii.start) + hex + source.slice(ascii.end);
+  const max = declaration(source, variable("U128_MAX"));
+  return source.slice(0, max.end) + "\n" + hex + source.slice(max.end);
 }
 
 export function prepareVariant(root, directory, variant) {

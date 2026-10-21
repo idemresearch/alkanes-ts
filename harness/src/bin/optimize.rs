@@ -221,7 +221,7 @@ fn main() -> Result<()> {
             measure(fixture, &Case::probe("verify_encoding", 0, 6), 1)?;
         }
     }
-    writeln!(report, "\nContract annotations may enforce proofs the compiler already infers. The scalar Int32 pair uses the same explicit wrapping operations on both paths; it does not test Int32[] storage. SDK annotations mark AlkaneId as Acyclic and bytesEqual as NoThrow. The codec variant additionally replaces per-nibble string construction with ASCII-byte encoding, and per-byte bigint u128 encoding/decoding with two DataView u64 limbs (retaining the short-input fallback). These are SDK algorithms, not compiler patches. The readonly linked-node probe tests a separate Acyclic inference limitation. No production host surcharges are modeled. See bench/OPTIMIZATION.md.")?;
+    writeln!(report, "\nContract annotations may enforce proofs the compiler already infers. The scalar Int32 pair uses the same explicit wrapping operations on both paths; it does not test Int32[] storage. SDK annotations mark AlkaneId as Acyclic and bytesEqual as NoThrow. The codec variant additionally replaces per-nibble string construction with arithmetic ASCII-byte encoding, per-byte bigint u128 encoding/decoding with two DataView u64 limbs (retaining the short-input fallback), and temporary DataView u32 writes with direct byte writes. These are SDK algorithms, not compiler patches. The readonly linked-node probe tests a separate Acyclic inference limitation. No production host surcharges are modeled. See bench/OPTIMIZATION.md.")?;
     if let Some(path) = output {
         std::fs::write(path, &report)?;
     }

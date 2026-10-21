@@ -1,6 +1,6 @@
 # Can scriptc fuel improve without a fork?
 
-Yes. The strongest improvements in the original experiment came from changing SDK algorithms with scriptc 0.3.6. The project now uses **0.4.0**, and the two codec improvements are applied in `sdk/bytes.ts`. See the [production before/after report](SDK_OPTIMIZATION_RESULTS.md) for current counter/token measurements. The builder preserves the previous algorithms in baseline copies under `build/optimization/<version>/`; contracts use the optimized production codecs.
+Yes. The strongest improvements in the original experiment came from changing SDK algorithms with scriptc 0.3.6. The project now uses **0.4.0**, and the codec improvements are applied in `sdk/bytes.ts`. See the [production before/after report](SDK_OPTIMIZATION_RESULTS.md) for current counter/token measurements. The builder preserves the previous algorithms in baseline copies under `build/optimization/<version>/`; contracts use the optimized production codecs.
 
 See [the historical experiment report](OPTIMIZATION_RESULTS.md). Its descriptions of codec candidates and unchanged production sources describe the state at the time of that experiment.
 
@@ -33,14 +33,17 @@ Unlike the repeated microbenchmarks, the smoke figures above were collected in o
 
 The **annotations** variant marks `AlkaneId` as `Acyclic` and `bytesEqual` as `NoThrow`. It produces byte-for-byte identical optimized Wasm to the baseline on both tested compilers. `AlkaneId` is live in the context parser; `bytesEqual` is not reached by these SDK probes, so its marker cannot affect their runtime. Separate paired kernels test active `NoThrow`, `Int32`, `Acyclic` and `Immutable` functions. Those kernels also produce no fuel improvement. This is evidence about these workloads, not a claim that annotations never help; some contracts formalize optimizations the compiler can already infer.
 
-The **codecs** variant retains those annotations and now uses the production algorithms. The **baseline** and **annotations** variants restore the three functions and hex table from `bench/optimization/legacy-codecs.ts`, so promotion into production does not erase the comparison. The two optimizations are:
+The **codecs** variant retains those annotations and now uses the production algorithms. The **baseline** and **annotations** variants restore the three codec functions, hex table and `ByteWriter` class from `bench/optimization/legacy-codecs.ts`, so promotion into production does not erase the comparison. The optimizations are:
 
-- `toHex` builds an ASCII `Uint8Array`, then decodes it once. This avoids constructing and concatenating strings for every nibble. The cache still uses the same exact lowercase hex keys; no storage schema or cache semantics change.
+- `toHex` builds an ASCII `Uint8Array`, then decodes it once. Nibble values are converted to ASCII arithmetically, avoiding both per-nibble string construction and a global lookup table's initialization. The cache still uses the same exact lowercase hex keys; no storage schema or cache semantics change.
 - `u128ToBytes` writes two little-endian `DataView.setBigUint64` limbs instead of performing sixteen bigint masking/shifting steps. `bytesToU128` similarly reads two limbs when sixteen bytes are available, while retaining the original short-input and unusual-offset fallback. Range checks remain in place.
+- `ByteWriter.u32` writes four bytes with numeric shifts instead of allocating a temporary `DataView`. Its modulo conversion and the writer's deferred byte references and repeated `finish()` behavior are preserved.
 
 The codec changes do not alter `checkedAdd`, bigint multiplication, the host callback ABI or the four-byte scratch loop. Consequently the arithmetic and host-copy controls retain exactly their baseline fuel. The large improvement in empty SDK execution comes primarily from more efficient parsing of the u128 fields in the context and response encoding.
 
-There are tradeoffs. In the original 0.3.6 experiment, the ASCII lookup table added initialization work: counter `__meta` rose from 50,222 to 52,247 fuel and its raw binary grew from 261,223 to 265,245 bytes. The current production report records the 0.4.0 figures. The codec still allocates buffers and uses bigint conversions at limb boundaries. These savings do not imply Rust parity or a completed runtime determinism audit.
+In the original 0.3.6 experiment, the ASCII lookup table added initialization work: counter `__meta` rose from 50,222 to 52,247 fuel and its raw binary grew from 261,223 to 265,245 bytes. The latest pass removes that table and the u32 DataView allocations. Against checkpoint `0a1dd35`, counter metadata falls from 54,846 to 52,744 fuel, initialization from 73,143 to 66,493, and fill(1,000) from 11,008,782 to 9,111,819 (17.2% less). Both contracts shrink by about 1.9 KB. See the [incremental report](NEXT_OPTIMIZATION_RESULTS.md) for 20 checked repetitions and artifact hashes. The preserved reference hashes match the production artifacts recorded at `0a1dd35` in `bench/SDK_OPTIMIZATION_RESULTS.md`.
+
+The [current warm probes](SDK_PROBE_RESULTS.md) separate these SDK effects from checked arithmetic and host-copy controls, which retain identical fuel. The current [cumulative production report](SDK_OPTIMIZATION_RESULTS.md) shows metadata slightly below the legacy baseline. The codec still allocates buffers and uses bigint conversions at limb boundaries. These savings do not imply Rust parity or a completed runtime determinism audit.
 
 ## Upstream features versus a compiler fork
 
@@ -60,7 +63,7 @@ Exact diagnostics and tiny source/profile repros are saved under `dist/optimizat
 
 Upgrading alone was not a general fuel solution in the original sample: the unmodified SDK pipeline grew from 82,374 to 84,688 fuel, checked bigint math changed by only eight fuel, and some object allocations and host operations improved. The compiler and runtime change together, so this is a toolchain comparison rather than an isolated compiler pass comparison. The current project combines 0.4.0 with the optimized SDK codecs.
 
-The two codec improvements are now applied and representative contracts are remeasured by `bench:sdk`. Heavy arithmetic would still benefit from a fixed-width u128 representation or batched native Wasm helpers. Such helpers may be linked through the existing callback/WAT approach; `--ffi` being unavailable does not by itself require changing the compiler. A fork would become relevant if we specifically need compiler-level bigint specialization or library ownership/ABI features that upstream will not provide. Neither is required for the gains demonstrated here.
+The codec improvements are now applied and representative contracts are remeasured by `bench:sdk`. Heavy arithmetic would still benefit from a fixed-width u128 representation or batched native Wasm helpers. Such helpers may be linked through the existing callback/WAT approach; `--ffi` being unavailable does not by itself require changing the compiler. A fork would become relevant if we specifically need compiler-level bigint specialization or library ownership/ABI features that upstream will not provide. Neither is required for the gains demonstrated here.
 
 Official references: [contract types](https://scriptc.dev/docs/contracts), [Wasm library ABI and ownership](https://scriptc.dev/docs/wasm), [FFI limits](https://scriptc.dev/docs/ffi).
 
@@ -77,9 +80,11 @@ npm run build
 npm run bench:sdk -- --output bench/SDK_OPTIMIZATION_RESULTS.md
 ```
 
-`test:bench:optimize` runs the production codec tests, which are also included in `npm test`. They compare the actual SDK with independently expected hexadecimal bytes and the preserved legacy functions across all byte values, 500 seeded random u128s, limb boundaries, offset typed-array views, short storage values, unusual offsets and out-of-range inputs. The tests transpile the production TypeScript using the project's TypeScript compiler. The fuel runner separately validates full-width Wasm roundtrips and expected scalar checksums.
+`test:bench:optimize` runs the production codec tests, which are also included in `npm test`. They compare the actual SDK with independently expected hexadecimal bytes and the preserved legacy functions across all byte values, 500 seeded random u128s, limb boundaries, offset typed-array views, short storage values, unusual offsets and out-of-range inputs. Writer tests cover numeric u32 boundaries, fractions, nonfinite values, 500 seeded random u32s, byte aliasing and repeated finishes. The tests transpile the production TypeScript using the project's TypeScript compiler. The fuel runner separately validates full-width Wasm roundtrips and expected scalar checksums.
 
-The benchmark runner defaults to the last toolchain built by `build:bench:optimize`. To recreate both sides of the historical comparison without changing the current root pins, install 0.3.6 in an isolated directory, then build the current 0.4.0 side:
+To reproduce the latest incremental comparison, build production contracts from `0a1dd35` in a separate checkout with its pinned toolchain, preserve its `dist/counter.wasm` and `dist/token.wasm`, then run `npm run bench:sdk -- --baseline <directory-with-reference-wasm> --output bench/NEXT_OPTIMIZATION_RESULTS.md` from the current checkout. Verify the reference hashes against the saved report. To regenerate the current probe report, use `npm run bench:optimize -- --iterations 20 --no-grow --output bench/SDK_PROBE_RESULTS.md`.
+
+The benchmark runner defaults to the last toolchain built by `build:bench:optimize`. To compare the current algorithms under both toolchains without changing the root pins, install 0.3.6 in an isolated directory, then build the current 0.4.0 side. These reruns include subsequent SDK changes; the historical report remains a record of its original artifacts:
 
 ```sh
 npm install --prefix build/toolchains/scriptc-0.3.6 --save-exact \
@@ -88,7 +93,7 @@ node build/toolchains/scriptc-0.3.6/node_modules/scriptc/scripts/install-native.
 npm run build:bench:optimize -- --toolchain build/toolchains/scriptc-0.3.6
 npm run build:bench:optimize
 npm run bench:optimize -- --versions 0.3.6,0.4.0 --iterations 20 --no-grow \
-  --output bench/OPTIMIZATION_RESULTS.md
+  --output /tmp/toolchain-comparison.md
 ALKANES_DIST=dist/optimization/0.4.0 npm test
 ```
 

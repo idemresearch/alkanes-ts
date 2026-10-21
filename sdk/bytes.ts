@@ -2,14 +2,15 @@
 // the wire is a u128, represented here as a bigint.
 
 export const U128_MAX = (1n << 128n) - 1n;
-const HEX_ASCII = new Uint8Array([48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 97, 98, 99, 100, 101, 102]);
 
 export function toHex(bytes: Uint8Array): string {
   // Decode once instead of allocating and concatenating per-nibble strings.
   const out = new Uint8Array(bytes.length * 2);
   for (let i = 0; i < bytes.length; i++) {
-    out[i * 2] = HEX_ASCII[bytes[i] >>> 4];
-    out[i * 2 + 1] = HEX_ASCII[bytes[i] & 15];
+    const high = bytes[i] >>> 4;
+    const low = bytes[i] & 15;
+    out[i * 2] = high + (high < 10 ? 48 : 87);
+    out[i * 2 + 1] = low + (low < 10 ? 48 : 87);
   }
   return new TextDecoder().decode(out);
 }
@@ -84,7 +85,10 @@ export class ByteWriter {
 
   u32(value: number): ByteWriter {
     const b = new Uint8Array(4);
-    new DataView(b.buffer).setUint32(0, value, true);
+    b[0] = value & 0xff;
+    b[1] = (value >>> 8) & 0xff;
+    b[2] = (value >>> 16) & 0xff;
+    b[3] = value >>> 24;
     this.parts.push(b);
     return this;
   }

@@ -57,3 +57,32 @@ test("short storage values and unusual offsets retain existing decoder behavior"
     assert.throws(() => codecs.u128ToBytes(value), /u128 out of range/);
   }
 });
+
+test("u32 writer preserves little-endian modulo conversion for numeric inputs", () => {
+  const values = [0, 1, 255, 256, 65535, 65536, 0x7fffffff, 0x80000000, 0xffffffff,
+    0x100000000, -1, -255.75, 257.75, Number.MAX_SAFE_INTEGER, NaN, Infinity, -Infinity];
+  for (let i = 0; i < 500; i++) values.push(randomU32());
+  const actual = new codecs.ByteWriter();
+  const legacy = new baseline.ByteWriter();
+  const expected = Buffer.alloc(values.length * 4);
+  values.forEach((value, i) => {
+    actual.u32(value);
+    legacy.u32(value);
+    expected.writeUInt32LE(value >>> 0, i * 4);
+  });
+  assert.deepEqual(actual.finish(), new Uint8Array(expected));
+  assert.deepEqual(actual.finish(), legacy.finish());
+});
+
+test("writer keeps byte references until finish and permits repeated finishes", () => {
+  const bytes = new Uint8Array([1, 2, 3]);
+  const writer = new codecs.ByteWriter().u32(3).bytes(bytes).u128(1n << 96n);
+  const legacy = new baseline.ByteWriter().u32(3).bytes(bytes).u128(1n << 96n);
+  bytes[0] = 9;
+  assert.deepEqual(writer.finish(), legacy.finish());
+  const first = writer.finish();
+  writer.u32(0xffffffff);
+  legacy.u32(0xffffffff);
+  assert.deepEqual(writer.finish(), legacy.finish());
+  assert.deepEqual(first, writer.finish().subarray(0, first.length));
+});

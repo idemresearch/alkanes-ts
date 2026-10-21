@@ -8,6 +8,8 @@ For paired measurements separating initialization, arithmetic, byte encoding, ho
 
 The codec improvements are now applied to the production SDK. The [current production report](SDK_OPTIMIZATION_RESULTS.md) compares real counter/token contracts against the preserved legacy codecs using scriptc 0.4.0. Reproduce with `npm run build`, `npm run build:bench:optimize`, and `npm run bench:sdk`.
 
+The [latest incremental report](NEXT_OPTIMIZATION_RESULTS.md) compares against commit `0a1dd35`, before replacing the hex lookup table and u32 DataView writes. The [current SDK probe report](SDK_PROBE_RESULTS.md) separates warm encoding, serialization, arithmetic and host-copy workloads.
+
 ## Setup
 
 - **Contracts:** `bench/rust/{counter,token}` reimplement `contracts/{counter,token}` with `alkanes-runtime`, using the same opcodes, storage keys, revert messages and responses. They are ports written for this benchmark, not upstream std contracts. The counter has two scaling workloads: `sum(n)` (Σi² over u128) and `fill(n)` (n storage writes).
