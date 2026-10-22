@@ -18,6 +18,8 @@ use metashrew_support::index_pointer::KeyValuePointer;
 use protorune_support::balance_sheet::ProtoruneRuneId;
 use std::{collections::BTreeMap, io::Cursor};
 use wasm_bindgen_test::wasm_bindgen_test;
+#[cfg(feature="examples")]
+mod examples;
 
 const TS: &[u8] = include_bytes!("./capped-token.wasm");
 #[cfg(feature = "baseline")]

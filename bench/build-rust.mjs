@@ -23,7 +23,7 @@ for (const name of ["counter", "token"]) {
   mkdirSync(join(crate, "src"), { recursive: true });
   let source = read(join(root, "bench/rust", name, "src/lib.rs"));
   if (name === "counter") {
-    const needle = "    fn sum(&self, n: u128) -> Result<CallResponse> {\n";
+    const needle = "    fn sum(&self, n: u128) -> Result<CallResponse> {\n        self.reject_assets()?;\n";
     if (source.split(needle).length !== 2) throw new Error("Rust sum fixture changed");
     source = source.replace(needle, needle + read(join(root, "bench/rust/numeric-fast-path.rs")));
   }
@@ -59,7 +59,8 @@ const metadata = [
   `alkanes-rs tracked changes: ${command("git", ["status", "--porcelain", "--untracked-files=no"], upstream) ? "yes" : "no"}`,
   `upstream Cargo.lock SHA-256: ${sha256(join(upstream, "Cargo.lock"))}`,
   `Rust: ${command("rustc", [`+${toolchain}`, "--version"])}`,
-  "profile: opt-level=3, lto=fat, codegen-units=1, panic=abort; no wasm-opt",
+  "profile: opt-level=3, lto=fat, codegen-units=1, panic=abort",
+  `wasm-opt: ${command(join(root,'node_modules/.bin/wasm-opt'),['--version'])}`,
 ];
 for (const numeric of [false, true]) {
   execFileSync("cargo", [`+${toolchain}`, "build", "--release", "--target", "wasm32-unknown-unknown",
@@ -71,6 +72,9 @@ for (const numeric of [false, true]) {
     const file = join(directory, `rust-${name}.wasm`);
     copyFileSync(join(work, "target/wasm32-unknown-unknown/release", `alkanes_bench_${name}.wasm`), file);
     metadata.push(`${numeric ? "numeric-fast-path/" : ""}rust-${name}.wasm SHA-256: ${sha256(file)}`);
+    const optimized=join(directory,`rust-${name}-opt.wasm`);
+    execFileSync(join(root,'node_modules/.bin/wasm-opt'),['--mvp-features','--enable-bulk-memory','--enable-sign-ext','--enable-nontrapping-float-to-int','--enable-mutable-globals','-O3',file,'-o',optimized],{stdio:'inherit'});
+    metadata.push(`${numeric ? "numeric-fast-path/" : ""}rust-${name}-opt.wasm SHA-256: ${sha256(optimized)}`);
   }
 }
 metadata.push(`comparison Cargo.lock SHA-256: ${sha256(join(work, "Cargo.lock"))}`);

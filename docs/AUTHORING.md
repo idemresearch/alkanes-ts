@@ -1,6 +1,6 @@
 # Contract authoring prototype
 
-Counter and CappedToken use a compiler-supported class frontend. scriptc 0.4.0 remains the Wasm backend. No scriptc fork is required. Eligible contracts such as CappedToken use [fixed-width lowering](WORD_LOWERING.md): scriptc compiles the methods and metered Wasm helpers implement the integer/storage/asset SDK. Broader syntax uses the original checked bigint backend. The frontend is deliberately a restricted language prototype; the public package name and complete contract API remain provisional. [CappedToken](CAPPED_TOKEN.md) adds one-time initialization, typed IDs, auth verification, tracked assets and deployment plans.
+Counter and CappedToken use a compiler-supported class frontend. scriptc 0.4.0 remains the Wasm backend. No scriptc fork is required. Eligible contracts use [fixed-width lowering](WORD_LOWERING.md): scriptc compiles the methods and metered Wasm helpers implement the integer/storage/asset SDK. The [extended word SDK](EXAMPLES_OPTIMIZATION.md) supports Counter's loops/raw storage and the static fluent Token. Unsupported syntax uses the original checked bigint backend. The frontend is deliberately a restricted language prototype; the public package name and complete contract API remain provisional. [CappedToken](CAPPED_TOKEN.md) adds one-time initialization, typed IDs, auth verification, tracked assets and deployment plans.
 
 ```ts
 import { Contract, state, method, view, type u128 } from "../../sdk/authoring.ts";

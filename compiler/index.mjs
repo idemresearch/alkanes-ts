@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { lowerWords } from "./word.mjs";
+import { lowerSDK, lowerFluent } from "./word-sdk.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultSDK = resolve(root, "sdk");
@@ -27,7 +28,7 @@ export function compileContract({ filename, source = readFileSync(filename, "utf
     const marker = parsed.statements.find((s) => ts.isImportDeclaration(s) &&
       resolve(dirname(filename), s.moduleSpecifier.text) === resolve(sdkDirectory, "authoring.ts"));
     if (marker) fail(marker, "authoring contracts require a named default-exported class");
-    return null; // Fluent SDK contracts remain supported.
+    return wordLowering ? lowerFluent({filename,source,sdkDirectory}) : null;
   }
   const options = { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.NodeNext,
     moduleResolution: ts.ModuleResolutionKind.NodeNext, strict: true, noEmit: true,
@@ -452,6 +453,7 @@ export function execute(context: Uint8Array): Uint8Array { return __alk_executeD
 export function meta(): Uint8Array { return __alk_utf8(${JSON.stringify(abi)}); }
 `;
   const word=wordLowering?lowerWords({filename,source,manifest,abi,sdkDirectory}):null;
-  manifest.lowering=word?'word-v1':'bigint';
-  return { lowered:word??lowered, abi, manifest, word:!!word };
+  const sdk=wordLowering&&!word?lowerSDK({filename,source:lowered,manifest,abi,sdkDirectory}):null;
+  manifest.lowering=word?'word-v1':sdk?'word-sdk-v1':'bigint';
+  return { lowered:word??sdk??lowered, abi, manifest, word:word?true:sdk?'sdk':false };
 }

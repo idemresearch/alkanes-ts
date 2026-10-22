@@ -109,6 +109,16 @@ test("token: only the owner can mint; incoming alkanes are forwarded", () => {
   assert.equal(u128.decode(vm.call({ target: TOKEN, inputs: [101] }).data), 150n);
 });
 
+test("token: metadata, wide owner IDs and duplicate/zero forwarding stay exact", () => {
+  const vm=setup(),caller={block:1n<<127n,tx:(1n<<96n)+5n};
+  const incoming=[{id:{block:4n,tx:7n},value:2n},{id:{block:4n,tx:7n},value:3n},{id:TOKEN,value:0n}];
+  const issued={id:TOKEN,value:0n};
+  assert.deepEqual(vm.call({target:TOKEN,inputs:[0,0],caller,incoming}).alkanes,[...incoming,issued]);
+  assert.deepEqual(vm.call({target:TOKEN,inputs:[77,0],caller,incoming}).alkanes,[...incoming,issued]);
+  const metadata=vm.meta(TOKEN);assert.equal(metadata.contract,"TypeScriptToken");
+  assert.deepEqual(metadata.methods.map(m=>[m.opcode,m.name,m.returns]),[[0,"initialize","void"],[77,"mint","void"],[99,"get_name","String"],[100,"get_symbol","String"],[101,"get_total_supply","u128"],[200,"forward_call","Vec<u8>"]]);
+});
+
 test("token: extcall into another alkane returns its data", () => {
   const vm = setup();
   vm.call({ target: COUNTER, inputs: [0] });

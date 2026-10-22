@@ -35,9 +35,9 @@ The manifest reports `lowering: "word-v1"` or `"bigint"`. `compileContract({ ...
 
 ## Current eligibility
 
-The path supports typed u128/AlkaneId state, explicit initialization and entrypoints, bigint literals, checked `+`/`-`, comparisons and boolean conditions, simple local constants/variables, field assignments, if/else, literal assertions/errors, `this.auth.require`, and `this.assets.mintSelf`. It supports primitive/ID/void ABI results and full-width selectors.
+The `word-v1` path supports typed u128/AlkaneId state, explicit initialization and entrypoints, bigint literals, checked `+`/`-`, comparisons and boolean conditions, simple local constants/variables, field assignments, if/else, literal assertions/errors, `this.auth.require`, and `this.assets.mintSelf`. It supports primitive/ID/void ABI results and full-width selectors.
 
-It currently requires imports from the authoring entry point and has no ordinary instance fields or helper methods. Loops, multiplication/division, explicit wrapping/wide helpers, dynamic errors, exception recovery, local reassignment/shadowing, `var`, context APIs, raw storage, general cross-contract calls and explicit response objects use the general backend. Language support is unchanged: fallback preserves the existing checked bigint implementation. Counter and legacy Token currently retain that path.
+That narrow path requires imports from the authoring entry point and has no ordinary instance fields or helper methods. A second [word SDK path](EXAMPLES_OPTIMIZATION.md), `word-sdk-v1`, adds Counter and static fluent Token support: loops, helpers, checked multiplication, raw storage, context IDs, byte responses, logging and calls with literal fuel limits. Unsupported operations, including division, wrapping/wide helpers and exception recovery, retain the general checked bigint backend. Eligibility is conservative and applies to the whole contract.
 
 An uncaught failure latches the first error and produces the same Alkanes revert protocol. This is valid for the accepted subset because it cannot catch or inspect intermediate exceptions. Source that does so remains on the general backend. Scope and statement boundaries are preserved; source names cannot collide with compiler-private identifiers.
 

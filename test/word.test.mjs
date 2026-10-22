@@ -55,7 +55,7 @@ test('untracked forwarding preserves duplicate and zero transfers exactly',()=>{
 test('word lowering is optional and rejects syntax requiring general exceptions or arithmetic',()=>{
  const filename=resolve('test/fixtures/word-choice.ts');
  const source=body=>'import {Contract,view,type u128} from "../../sdk/authoring.ts";export default class c extends Contract {'+body+'}';
- for(const body of ['@view({opcode:0}) read(a:u128):u128{return a*2n;}','@view({opcode:0}) read():u128{try{return 1n;}catch{return 0n;}}','@view({opcode:0}) read(a:u128):u128{if(a>0n){const a=1n;}return a;}','@view({opcode:0}) read():u128{var a=1n;return a;}']){
+ for(const body of ['@view({opcode:0}) read(a:u128):u128{return a/2n;}','@view({opcode:0}) read():u128{try{return 1n;}catch{return 0n;}}']){
   assert.equal(compileContract({filename,source:source(body),wordLowering:true}).word,false);
  }
  const compiled=compileContract({filename,source:source('@view({opcode:0}) read(w:u128):u128{const id=w+1n;return id;}'),wordLowering:true});

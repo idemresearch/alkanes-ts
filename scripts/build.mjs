@@ -17,7 +17,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { gzipSync } from "node:zlib";
 import { compileContract } from "../compiler/index.mjs";
 import { generateClient } from "../compiler/client.mjs";
-import { wordCallbacks, wordAdapter } from "../compiler/word-abi.mjs";
+import { wordCallbacks, sdkCallbacks, wordAdapter } from "../compiler/word-abi.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const bin = (name) => join(root, "node_modules", ".bin", name);
@@ -110,7 +110,7 @@ export function buildLibrary({ entry, work, out, extraExports = [], benchmark = 
           sink_register_symbol: "contract_sink",
           callback_register_symbol: "contract_callback",
         },
-        callbacks: word ? wordCallbacks : PROFILE_CALLBACKS,
+        callbacks: word === 'sdk' ? sdkCallbacks : word ? wordCallbacks : PROFILE_CALLBACKS,
         exports: [
           { export: "execute", symbol: "contract_execute", params: ["bytes"], returns: word ? "f64" : "bytes" },
           { export: "meta", symbol: "contract_meta", params: [], returns: "bytes" },
@@ -134,8 +134,8 @@ export function buildLibrary({ entry, work, out, extraExports = [], benchmark = 
   let adapterSource = join(root, "shim", "adapter.wat");
   if (word) {
     adapterSource = join(work, "adapter.wat");
-    writeFileSync(adapterSource, wordAdapter());
-    run("zig", ["cc", "--target=wasm32-wasi", "-O3", "-flto", "-mbulk-memory", "-nostdlib", "-fno-stack-protector", "-Wl,--no-entry", "-Wl,--import-memory", "-Wl,--export=__stack_pointer", join(root,"shim/word.c"), "-o",join(work,"word.wasm")]);
+    writeFileSync(adapterSource, wordAdapter(word === 'sdk'));
+    run("zig", ["cc", "--target=wasm32-wasi", "-O3", "-flto", "-mbulk-memory", "-nostdlib", "-fno-stack-protector", "-Wl,--no-entry", "-Wl,--import-memory", "-Wl,--export=__stack_pointer", join(root,word === 'sdk'?"shim/word-sdk.c":"shim/word.c"), "-o",join(work,"word.wasm")]);
     run(bin("wasm-dis"),[...FEATURES,join(work,"word.wasm"),"-o",join(work,"word.wat")]);
     const native=readFileSync(join(work,"word.wat"),"utf8");
     if(native.split('(import "env" "memory"').length!==2||/^\s*\(data\b/m.test(native))throw new Error("word SDK requires imported memory and no static data segments");

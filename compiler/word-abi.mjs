@@ -6,10 +6,16 @@ export const wordCallbacks=Object.entries({
  store:['u32','bytes','u32','u32'],mint:['u32','u32'],auth:['u32','u32','u32'],
  id:['u32','u32','u32'],unknown:['u32','u32'],finish:['u32','u32','u32','bytes'],
 }).map(([name,params])=>({name:'__w_'+name,params,returns:['forward','readonly','fail','explain','store','mint','auth','unknown'].includes(name)?'void':'u32'}));
-export function wordAdapter(){
- const callbacks=wordCallbacks.map(c=>{
+export const sdkCallbacks=[...wordCallbacks.filter(c=>['begin','status','count','input','literal','op','readonly','finish'].includes(c.name.slice(4))),...Object.entries({
+ copybytes:['bytes'],copyraw:['u32','u32'],size:['u32'],concat:['u32','u32'],equalbytes:['u32','u32'],decode:['u32','u32','u32'],
+ rawload:['u32','u32'],rawstore:['u32','u32','u32'],context:['u32','u32'],parcel:['u32'],pay:['u32','u32','u32','u32'],
+ mul:['u32','u32','u32'],fromnumber:['u32','f64'],tonumber:['u32'],decimal:['u32'],height:[],log:['u32'],failbytes:['u32','u32'],
+ call:['u32','u32','u32','f64'],responsepart:['u32','u32'],finishresponse:['u32','u32','u32','bytes'],
+}).map(([name,params])=>({name:'__w_'+name,params,returns:['rawstore','log','failbytes'].includes(name)?'void':name==='tonumber'?'f64':'u32'}))];
+export function wordAdapter(sdk=false){
+ const callbacks=(sdk?sdkCallbacks:wordCallbacks).map(c=>{
   const n=c.name.slice(2),params=c.params.flatMap(t=>t==='bytes'?['i32','i32']:[t==='f64'?'f64':'i32']);
-  const declaration=params.map(t=>'(param '+t+')').join(' '),result=c.returns==='void'?'':'(result i32)';
+  const declaration=params.map(t=>'(param '+t+')').join(' '),result=c.returns==='void'?'':`(result ${c.returns==='f64'?'f64':'i32'})`;
   const locals=params.map((_,i)=>'(local.get '+i+')').join(' ');
   return {import:`(import "word" "${n}" (func $${n} ${declaration} ${result}))`,body:`(func (export "${c.name}") ${declaration} ${result} ${n==='w_begin'?'(global.set $word_stack (i32.and (i32.add (call $reserve (i32.const 4096)) (i32.const 4096)) (i32.const -16)))':''} (call $${n} ${locals}))`};
  });
