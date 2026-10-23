@@ -34,16 +34,17 @@
     "build:native": "node scripts/build-native-counter.mjs",
     "test:native": "npm run build:native && ALKANES_NATIVE_TESTS=1 node --test test/native-counter.test.mjs",
     "bench:native": "node integration/run.mjs --native-counter --bench",
-    "check:upstream-patch": "node scripts/native/check-upstream.mjs"
+    "check:upstream-patch": "node scripts/native/check-upstream.mjs",
+    "bench:stock": "node integration/stock.mjs"
   },
   "devDependencies": {
-    "@scriptc/runtime-wasm32-wasi": "0.4.0",
-    "@scriptc/types": "0.4.0",
+    "@scriptc/runtime-wasm32-wasi": "0.4.2",
+    "@scriptc/types": "0.4.2",
     "binaryen": "^125.0.0",
-    "scriptc": "0.4.0",
+    "scriptc": "0.4.2",
     "typescript": "^5.9.3"
   },
   "allowScripts": {
-    "scriptc@0.4.0": true
+    "scriptc@0.4.2": true
   }
 }

@@ -1,6 +1,6 @@
 # Counter and Token fixed-width SDK
 
-Counter and Token retain their existing source, selectors, storage keys and response policy. The compiler selects `word-sdk-v1`, keeping scriptc 0.4.0 as the compiler for dispatch, contract methods, helper functions and loops. [Runtime results](../bench/EXAMPLES_RUNTIME_RESULTS.md) compare both with their previous bigint builds and optimized Rust. [Integration results](../integration/EXAMPLES_RESULTS.md) record canonical execution tests and artifact hashes.
+Counter and Token retain their existing source, selectors, storage keys and response policy. The compiler selects `word-sdk-v1`, using stock scriptc 0.4.2 as the compiler for dispatch, contract methods, helper functions and loops. [Current stock-release results](../bench/STOCK_0_4_2_RESULTS.md) compare Counter, Token and CappedToken with optimized Rust and the previous stock compiler. The [earlier runtime results](../bench/EXAMPLES_RUNTIME_RESULTS.md) preserve the comparison with their previous bigint builds. [Integration results](../integration/EXAMPLES_RESULTS.md) record canonical execution tests and artifact hashes.
 
 ## Measured results
 

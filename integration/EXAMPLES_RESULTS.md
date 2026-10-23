@@ -13,13 +13,27 @@ test native_words_preserve_wide_values_checked_operations_and_self_auth ... ok
 test initialization_reentry_is_blocked ... ok
 test initialization_and_numeric_boundaries ... ok
 test authentication_failures_and_reentry ... ok
-test result: ok. 9 passed; 0 failed; 0 ignored; 0 filtered out; finished in 27.83s
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 filtered out; finished in 27.60s
 ```
 
 Covered: generated-client CREATE+init bytes; typed ID state; initialization gates and atomic deployment failure; actual upstream auth verification and returned assets; cap/max-u128 boundaries; failed-auth and post-auth rollback; auth and initializer reentry; callback cache invalidation; outgoing Bitcoin UTXO balances; complete TS/Rust response and storage parity. Additional Counter/Token coverage: checked wide increments/mints, numeric loops, storage fill, height, metadata responses, caller ownership, real UTXO balances and nested-call rollback.
 
 ```json
 {
+  "toolchain": {
+    "mode": "stock scriptc CLI",
+    "compilerPatches": [],
+    "packages": {
+      "scriptc": "0.4.2",
+      "@scriptc/runtime-wasm32-wasi": "0.4.2",
+      "@scriptc/types": "0.4.2"
+    },
+    "nativePackage": "@scriptc/cli-darwin-arm64",
+    "executableSHA256": "c4c86c6decd10b127a64a4eea46f06a9265562fd38b515906416f188b077563d",
+    "nativePackageIntegrity": "sha512-5hlE7yDZjvsz0YDdy3QLpltN+UosdDJ10OJVtmXAeXVxxWWrN1gw4+XYLNBKWG6hATFVH7FfGCNbi0fnugOPOA==",
+    "packageLockSHA256": "33d5508fbd44800015edfd50dd4fd92fd01d0e490fd13d9a03d0256019f6f008",
+    "node": "v24.22.0"
+  },
   "zig": "0.17.0",
   "binaryen": "wasm-opt version 125 (version_125)",
   "lowering": {
@@ -32,13 +46,13 @@ Covered: generated-client CREATE+init bytes; typed ID state; initialization gate
   "upstreamTrackedDirty": false,
   "hostRust": "rustc 1.91.1 (ed61e7d7e 2025-11-07)",
   "runner": "wasm-bindgen-test-runner 0.2.127",
-  "scriptc": "0.4.0",
+  "scriptc": "0.4.2",
   "machine": "Apple M3 Max, darwin arm64",
   "lockSHA256": "d505349e7198a391195700899067d6371ba96e4b0a87d33707b36cc81d3f5945",
   "artifacts": {
     "capped-token.wasm": {
-      "bytes": 107660,
-      "sha256": "70307bc7a3180e0fa9dea1d2c95096147f5c9e467cca895c01d434cb8c79e936"
+      "bytes": 111542,
+      "sha256": "1c929820c2e78aeac5705ffa99dd55fa228f666222538edc2b323ac22eec75d0"
     },
     "rust-capped-token.wasm": {
       "bytes": 175495,
@@ -57,28 +71,28 @@ Covered: generated-client CREATE+init bytes; typed ID state; initialization gate
       "sha256": "e0b4933736043edf5edfaa6af74aa6f86a11192ed8ab6d80bf02eb07f059a26e"
     },
     "init-probe.wasm": {
-      "bytes": 88418,
-      "sha256": "dbaaee276d801bce8890380c70488ad5276c746886f04ffdb7954756ef852981"
+      "bytes": 92302,
+      "sha256": "4c50f36c300c117f989d46844fa678dbfb7f4f1545032c1e1ab17377f6235c6d"
     },
     "cache-caller.wasm": {
-      "bytes": 92847,
-      "sha256": "14aa41048dbfe2232819012f24090cbb7afa87330108eb692f9139c38bb70c6e"
+      "bytes": 99048,
+      "sha256": "3374a7d2bf6b7c174dc807cb50bad209e11281d98e003a586fe9763f1a9a664f"
     },
     "cache-callee.wasm": {
-      "bytes": 86904,
-      "sha256": "a5b51cb3a6298deddc16e505655d7ff0a1384a4beea79a8f32c9f75c5a24ff37"
+      "bytes": 93108,
+      "sha256": "1100b5f92258e5e5b8b68fc03bc69649b0f57812702b49e0aeb1325bd5c2e351"
     },
     "word.wasm": {
-      "bytes": 158317,
-      "sha256": "bac8cd3d1dae1171252f0961199cdc1763a52eb23e90fbd3d3ec44a3d8b66ebf"
+      "bytes": 162199,
+      "sha256": "b4191cb9825c1712f4163ae052b0d7b93863cb667a83b359ef5123dd5970b17c"
     },
     "counter.wasm": {
-      "bytes": 110779,
-      "sha256": "057c398ae02561c254cedd9fbcf4b2357f5db60099589589efe0d3d082e629ef"
+      "bytes": 114541,
+      "sha256": "b2291b7265fc87e287b49f7f7b563ee0dad679bffb32310368e60f8d14232c9a"
     },
     "token.wasm": {
-      "bytes": 105523,
-      "sha256": "11fb9b6a8cdd5cde3d1eb1d86d5698a1e7fcb1316d3c03c6038fd8ea77725cbb"
+      "bytes": 111748,
+      "sha256": "8bde7ec9ab62ae5393f2607093c2db5140c1ef647877901038686953aa6a728b"
     },
     "counter-rust.wasm": {
       "bytes": 160581,
@@ -97,8 +111,8 @@ Covered: generated-client CREATE+init bytes; typed ID state; initialization gate
       "sha256": "d2d63907a32da6b1d837a5f03b4f5af0e4e902a674a2f5ca7026558f760af792"
     },
     "word-relay.wasm": {
-      "bytes": 93458,
-      "sha256": "c7aa0c8cfc9ad24d552c31f3931cf304971c5bb0527ee8ee265de20e345f2c7b"
+      "bytes": 98343,
+      "sha256": "7edef17eb38b1206aa31fbea33bf519873e513f54ba95e3eac5d86f8c9aa8386"
     }
   }
 }

@@ -1,6 +1,6 @@
 # Fixed-width lowering
 
-CappedToken keeps the same authored TypeScript and scriptc 0.4.0. The compiler now selects a fixed-width path for an eligible contract instead of representing every on-chain integer as a JavaScript bigint at runtime. The [isolation report](../bench/CAPPED_TOKEN_ISOLATION_RESULTS.md) and [canonical-runtime comparison](../bench/CAPPED_TOKEN_OPTIMIZATION_RESULTS.md) record the measured results and artifact hashes.
+CappedToken keeps the same authored TypeScript and now builds with unmodified scriptc 0.4.2. The compiler now selects a fixed-width path for an eligible contract instead of representing every on-chain integer as a JavaScript bigint at runtime. The [isolation report](../bench/CAPPED_TOKEN_ISOLATION_RESULTS.md) and [canonical-runtime comparison](../bench/CAPPED_TOKEN_OPTIMIZATION_RESULTS.md) record the original 0.4.0 optimization results and artifact hashes. The [stock 0.4.2 qualification](../bench/STOCK_0_4_2_RESULTS.md) records current results for all three contracts.
 
 This changes representation and SDK implementation. It does not remove initialization, checked arithmetic, views, auth verification or asset accounting.
 

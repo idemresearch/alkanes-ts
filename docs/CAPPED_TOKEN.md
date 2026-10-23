@@ -1,6 +1,6 @@
 # CappedToken
 
-The [contract](../contracts/capped-token/index.ts) uses the restricted Alkanes frontend with scriptc 0.4.0 as its backend:
+The [contract](../contracts/capped-token/index.ts) uses the restricted Alkanes frontend with stock scriptc 0.4.2 as its backend:
 
 ```ts
 import {

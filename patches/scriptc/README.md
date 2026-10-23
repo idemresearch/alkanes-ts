@@ -16,7 +16,7 @@ The existing checked class frontend still compiles the unchanged `contracts/coun
 
 This path does not compile or link `shim/word.c`, `shim/word-sdk.c`, or the ABI adapter WAT. scriptc's own runtime, its compiler support routines, and the deterministic WASI stand-ins remain. The final module has only `env.*` function imports and `memory`, `__execute`, `__meta` exports. Wasmi/actual-runtime tests establish compatibility without SIMD.
 
-The normal build remains on pinned scriptc 0.4.0. An isolated toolchain pins matching compiler/runtime 0.4.2 packages, allowing a release-only C-SDK control alongside the new compiler backend.
+This is a historical experiment from revision aa4baa1. At that revision the normal build used stock scriptc 0.4.0, and an isolated 0.4.2 toolchain supplied the patched prototype and release-only control. The current normal build uses stock 0.4.2 with the C SDK; its [qualification](../../bench/STOCK_0_4_2_RESULTS.md) applies no compiler patches. Reproduce this experiment and its original version labels from aa4baa1.
 
 ## Reproduce
 
