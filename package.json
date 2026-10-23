@@ -29,7 +29,12 @@
     "build:bench:optimize": "node bench/build-optimization.mjs",
     "bench:optimize": "cargo run --quiet --release --manifest-path harness/Cargo.toml --bin optimize --",
     "test:bench:optimize": "node --test test/bytes.test.mjs",
-    "bench:sdk": "node bench/measure-sdk.mjs"
+    "bench:sdk": "node bench/measure-sdk.mjs",
+    "setup:native": "node scripts/native/setup.mjs",
+    "build:native": "node scripts/build-native-counter.mjs",
+    "test:native": "npm run build:native && ALKANES_NATIVE_TESTS=1 node --test test/native-counter.test.mjs",
+    "bench:native": "node integration/run.mjs --native-counter --bench",
+    "check:upstream-patch": "node scripts/native/check-upstream.mjs"
   },
   "devDependencies": {
     "@scriptc/runtime-wasm32-wasi": "0.4.0",

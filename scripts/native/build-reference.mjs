@@ -1,0 +1,10 @@
+import {mkdirSync,writeFileSync} from 'node:fs';
+import {resolve,join} from 'node:path';
+import {compileContract} from '../../compiler/index.mjs';
+import {buildLibrary} from '../build.mjs';
+const root=resolve(import.meta.dirname,'../..'),base=join(root,'build/scriptc-native');
+const reference=join(base,'reference');mkdirSync(reference,{recursive:true});
+process.env.ZIG_GLOBAL_CACHE_DIR??=join(root,'build/zig-global-cache');process.env.ZIG_LOCAL_CACHE_DIR??=join(root,'build/zig-local-cache');
+const work=join(base,'c-sdk-0.4.2');mkdirSync(work,{recursive:true});
+const entry=join(work,'entry.ts');writeFileSync(entry,compileContract({filename:join(root,'contracts/counter/index.ts'),wordLowering:true}).lowered);
+buildLibrary({entry,work,out:join(reference,'counter-c-sdk-0.4.2.wasm'),word:'sdk',compiler:join(base,'toolchain/node_modules/.bin/scriptc'),runtimePack:join(base,'toolchain/node_modules/@scriptc/runtime-wasm32-wasi')});

@@ -123,3 +123,5 @@ integration/        actual upstream indexer tests, pinned dependencies and resul
 harness/            Rust wasmi 0.37.2 host model: wasmi-check runner and bench
 bench/              Rust twins of the examples and the alkanes-rs comparison
 ```
+
+The [native scriptc Counter prototype](patches/scriptc/README.md) applies an upstream-oriented patch to scriptc 0.4.2 to emit the Alkanes ABI and checked u128 without our C SDK. Its [actual-runtime comparison](bench/NATIVE_COUNTER_RESULTS.md) includes both C-SDK releases, a compiler-coercion ablation, and optimized Rust. This remains an opt-in Counter backend.
