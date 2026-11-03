@@ -8,7 +8,8 @@ const pool={block:2n,tx:10n},t0={block:2n,tx:1n},t1={block:2n,tx:2n},other={bloc
 const MAX=(1n<<128n)-1n;
 
 function isqrt(n){if(n<2n)return n;let x=n,y=(x+1n)/2n;while(y<x){x=y;y=(x+n/x)/2n;}return x;}
-const amountOut=(amountIn,rIn,rOut)=>amountIn*997n*rOut/(rIn*1000n+amountIn*997n);
+// Fee from the input first, then the constant-product price.
+const amountOut=(amountIn,rIn,rOut)=>{const x=amountIn*997n/1000n;return x*rOut/(rIn+x);};
 
 function setup(){
   const vm=new AlkanesVM();
@@ -113,8 +114,24 @@ test('AmmPool views reject assets, methods roll back atomically, and checked mat
   const vm=setup();add(vm,1_000_000n,4_000_000n);
   const before=state(vm);
   assert.throws(()=>vm.call({target:pool,inputs:[20],incoming:[{id:t0,value:1n}]}),/rejects incoming assets/);
-  // amountIn * 997 overflows u128: the swap reverts and nothing moves.
-  assert.throws(()=>swap(vm,t0,MAX/997n+1n),/u128 overflow/);
+  // An input the pool's balance cannot absorb is rejected by the host and nothing moves.
+  assert.throws(()=>swap(vm,t0,MAX-before.r0+1n),/balance overflow/);
   assert.deepEqual(state(vm),before);assertBacked(vm);
+  // Even the largest quotable input never prices the whole reserve.
+  assert.ok(view(vm,10,MAX)<before.r1);
   assert.throws(()=>vm.call({target:pool,inputs:[99]}),/Unrecognized opcode|unknown opcode|opcode/i);
+});
+
+test('AmmPool trades both ways when a reserve is far above MAX/1000 and the input is above MAX/997',()=>{
+  const vm=setup();
+  add(vm,MAX/1000n+1n,10n**30n);
+  for(const [id,amount] of [[t1,10n**27n],[t0,MAX/997n+1n],[t1,10n**28n]]){
+    const s=state(vm),zeroForOne=id===t0;
+    const expected=zeroForOne?amountOut(amount,s.r0,s.r1):amountOut(amount,s.r1,s.r0);
+    assert.ok(expected>0n);
+    assert.equal(view(vm,zeroForOne?10:11,amount),expected);
+    assert.equal(u128.decode(swap(vm,id,amount).data),expected);
+    assertBacked(vm);
+  }
+  const s=state(vm);assert.ok(s.r0*s.r1>=(MAX/1000n+1n)*10n**30n);
 });

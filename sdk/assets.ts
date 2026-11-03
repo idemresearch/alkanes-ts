@@ -1,5 +1,5 @@
 import { assertWritable } from "./effects.ts";
-import { balance, call, fuel } from "./runtime.ts";
+import { PRECOMPILE_BLOCK, balance, call, fuel } from "./runtime.ts";
 import { AlkaneId, AlkaneTransfer, AlkaneTransferParcel, CallResponse, Cellpack, Context } from "./types.ts";
 import { add, checked, sub } from "./u128.ts";
 
@@ -75,6 +75,9 @@ export class Assets {
 
   call(cellpack: Cellpack, transfers: AlkaneTransferParcel, fuelLimit: number): CallResponse {
     assertWritable();
+    // The host never moves assets for a precompile call, so the ledger debit
+    // below would silently turn them into custody.
+    if (cellpack.target.block === PRECOMPILE_BLOCK && transfers.transfers.length !== 0) throw new Error("PRECOMPILE_TAKES_NO_ASSETS");
     const saved = this.balances;
     this.balances = new Map<string, AlkaneTransfer>();
     for (const entry of saved.values()) this.balances.set(entry.id.toString(), entry);

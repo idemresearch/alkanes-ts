@@ -165,7 +165,9 @@ EXPORT("w_call") N extcall(Context *c, N cp, N parcel, double budget) {
     }
     return 0;
   }
-  c->storage = 0;
+  // Precompiles (block 800000000) take no checkpoint and commit nothing, so
+  // the buffered writes stay valid; any other call may have changed storage.
+  if (get(cp) != (U)800000000) c->storage = 0;
   return returned;
 }
 EXPORT("w_responsepart") N responsepart(N p, N which) {

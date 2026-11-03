@@ -1,5 +1,5 @@
 import { Contract, state, init, method, view, assert, type AlkaneId, type u128 } from "../../sdk/authoring.ts";
-import { mulDiv, mulDivUp, mulSqrt } from "../../sdk/u128.ts";
+import { mulDiv, mulSqrt } from "../../sdk/u128.ts";
 
 // Constant-product pool for two alkanes. LP shares are this contract's own
 // alkane: adding liquidity issues them, removing liquidity takes them back
@@ -108,10 +108,16 @@ export default class AmmPool extends Contract {
     return amountOut;
   }
 
-  // Output for an exact input, 0.3% fee: in*997*rOut / (rIn*1000 + in*997).
+  // Output for an exact input with a 0.3% fee taken from the input first:
+  // x = floor(in * 997 / 1000), out = floor(x * rOut / (rIn + x)). Rounding
+  // never pays more than the exact constant-product (Uniswap V2) output. In a
+  // swap, rIn + x <= rIn + in is the pool's own balance of the input token,
+  // which the host has already credited as a u128, so no step can overflow
+  // for any reserves. A quote for an input larger than any possible balance
+  // reverts with u128 overflow instead.
   private amountOut(amountIn: u128, reserveIn: u128, reserveOut: u128): u128 {
-    const inWithFee = amountIn * 997n;
-    return mulDiv(inWithFee, reserveOut, reserveIn * 1000n + inWithFee);
+    const afterFee = mulDiv(amountIn, 997n, 1000n);
+    return mulDiv(afterFee, reserveOut, reserveIn + afterFee);
   }
 
   @view({ opcode: 10 })

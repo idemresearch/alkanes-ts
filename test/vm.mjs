@@ -108,6 +108,15 @@ export class AlkanesVM {
   constructor({ height = 880000n, balances = true } = {}) {
     this.height = BigInt(height);
     this.enforceBalances = balances;
+    // Precompiled contracts at [800000000, tx] (alkanes-rs host_functions.rs
+    // _handle_special_extcall): block header, coinbase transaction, diesel
+    // mint count and total miner fee for the block being indexed.
+    this.precompiles = new Map([
+      [0n, () => new Uint8Array(80)],
+      [1n, () => new Uint8Array(0)],
+      [2n, () => u128.encode(0n)],
+      [3n, () => u128.encode(0n)],
+    ]);
     this.sequence = 0n;
     this.modules = new Map(); // idKey -> WebAssembly.Module
     this.storage = new Map(); // idKey -> Map<hex key, Uint8Array>
@@ -305,6 +314,17 @@ export class AlkanesVM {
     const inputs = [];
     while (cp.remaining() >= 16) inputs.push(cp.u128());
     const incoming = readParcel(new Reader(alkanesBytes));
+    if (target.block === 800000000n) {
+      // Answered by the host: no checkpoint, no storage piping, no transfers.
+      const precompile = this.precompiles.get(target.tx);
+      if (!precompile) {
+        frame.failed = true;
+        frame.returndata = concat([encodeParcel([]), new Uint8Array(REVERT), Buffer.from(`Unknown precompiled contract: [${target.block}, ${target.tx}]`)]);
+        return -frame.returndata.length;
+      }
+      frame.returndata = concat([encodeParcel([]), precompile()]);
+      return frame.returndata.length;
+    }
     const saved = this.snapshot();
     const balances = new Map(this.balances);
     // The caller's uncommitted writes become visible to the callee first.
