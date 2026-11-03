@@ -5,6 +5,9 @@ export const wordCallbacks=Object.entries({
  readonly:['u32','u32'],fail:['u32','bytes'],explain:['u32','bytes'],load:['u32','bytes','u32','u32'],
  store:['u32','bytes','u32','u32'],mint:['u32','u32'],auth:['u32','u32','u32'],
  id:['u32','u32','u32'],unknown:['u32','u32'],finish:['u32','u32','u32','bytes'],
+ // Three-operand checked math (mulDiv/mulDivUp/mulSqrt/sqrt) and asset custody
+ // (received/held/retain/send/myself); see shim/word.c.
+ op3:['u32','u32','u32','u32','u32'],custody:['u32','u32','u32','u32','u32'],
 }).map(([name,params])=>({name:'__w_'+name,params,returns:['forward','readonly','fail','explain','store','mint','auth','unknown'].includes(name)?'void':'u32'}));
 export const sdkCallbacks=[...wordCallbacks.filter(c=>['begin','status','count','input','literal','op','readonly','finish'].includes(c.name.slice(4))),...Object.entries({
  copybytes:['bytes'],copyraw:['u32','u32'],size:['u32'],concat:['u32','u32'],equalbytes:['u32','u32'],decode:['u32','u32','u32'],
