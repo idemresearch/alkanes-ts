@@ -19,6 +19,10 @@ export default class AmmPool extends Contract {
   @init({ opcode: 0 })
   initialize(token0: AlkaneId, token1: AlkaneId): void {
     assert(!(token0.block === token1.block && token0.tx === token1.tx), "IDENTICAL_TOKENS");
+    // The pool's own ID is its LP share; it cannot also be a reserve asset.
+    const self = this.context.myself;
+    assert(!(token0.block === self.block && token0.tx === self.tx), "LP_TOKEN_AS_RESERVE");
+    assert(!(token1.block === self.block && token1.tx === self.tx), "LP_TOKEN_AS_RESERVE");
     this.token0 = token0;
     this.token1 = token1;
   }

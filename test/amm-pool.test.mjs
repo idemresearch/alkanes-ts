@@ -29,6 +29,8 @@ test('AmmPool initializes once, rejects identical tokens and gates methods until
   const vm=new AlkanesVM();vm.deploy(pool,readFileSync('dist/amm-pool.wasm'));
   assert.throws(()=>add(vm,10n,10n),/NOT_INITIALIZED/);
   assert.throws(()=>vm.call({target:pool,inputs:[0,t0.block,t0.tx,t0.block,t0.tx]}),/IDENTICAL_TOKENS/);
+  assert.throws(()=>vm.call({target:pool,inputs:[0,pool.block,pool.tx,t1.block,t1.tx]}),/LP_TOKEN_AS_RESERVE/);
+  assert.throws(()=>vm.call({target:pool,inputs:[0,t0.block,t0.tx,pool.block,pool.tx]}),/LP_TOKEN_AS_RESERVE/);
   vm.call({target:pool,inputs:[0,t0.block,t0.tx,t1.block,t1.tx]});
   assert.throws(()=>vm.call({target:pool,inputs:[0,t0.block,t0.tx,t1.block,t1.tx]}),/ALREADY_INITIALIZED/);
   assert.deepEqual(vm.call({target:pool,inputs:[23]}).data,u128.list([t0.block,t0.tx]));
