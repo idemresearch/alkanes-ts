@@ -46,3 +46,28 @@ export function mulDiv(a: bigint, b: bigint, denominator: bigint): bigint {
   if (denominator === 0n) throw new Error("u128 division by zero");
   return checked((a * b) / denominator);
 }
+export function mulDivUp(a: bigint, b: bigint, denominator: bigint): bigint {
+  checked(a); checked(b); checked(denominator);
+  if (denominator === 0n) throw new Error("u128 division by zero");
+  const product = a * b;
+  return checked(product / denominator + (product % denominator === 0n ? 0n : 1n));
+}
+export function min(a: bigint, b: bigint): bigint { return checked(a) < checked(b) ? a : b; }
+export function max(a: bigint, b: bigint): bigint { return checked(a) > checked(b) ? a : b; }
+
+// Floor square root of a nonnegative integer below 2^256 (Newton's method from
+// an upper bound, so the sequence decreases monotonically to the root).
+function isqrt(n: bigint): bigint {
+  if (n < 2n) return n;
+  let bits = 0n;
+  for (let v = n; v > 0n; v = v >> 1n) bits = bits + 1n;
+  let x = 1n << ((bits + 1n) >> 1n);
+  for (;;) {
+    const y = (x + n / x) >> 1n;
+    if (y >= x) return x;
+    x = y;
+  }
+}
+export function sqrt(a: bigint): bigint { return isqrt(checked(a)); }
+// floor(sqrt(a * b)) with the exact 256-bit product; the root always fits u128.
+export function mulSqrt(a: bigint, b: bigint): bigint { return isqrt(checked(a) * checked(b)); }

@@ -1,9 +1,10 @@
 //! Runs a contract under the wasmi 0.37.2 alkanes host model in lib.rs and
 //! prints each call's result and fuel.
 //!
-//! Usage: wasmi-check <contract.wasm> [--meta] [opcode,input,...]...
+//! Usage: wasmi-check <contract.wasm> [--meta] [opcode,input,...[@block:tx=value+...]]...
 //! Each positional argument is one call to the contract, deployed at 2:1 and
-//! called by 0:0. Storage persists between calls and rolls back on revert.
+//! called by 0:0, optionally with an incoming parcel after `@`. Storage and
+//! alkane balances persist between calls and roll back on revert.
 
 use anyhow::{anyhow, Result};
 use wasmi::Module;
@@ -26,8 +27,18 @@ fn main() -> Result<()> {
             println!("__meta  fuel={:<9} {}", out.fuel_used, abi.unwrap_or_else(|e| format!("TRAP {e}")));
             continue;
         }
-        let inputs: Vec<u128> = arg.split(',').map(|s| s.trim().parse()).collect::<Result<_, _>>()?;
-        let out = world.execute((2, 1), (0, 0), &inputs);
+        let (call, parcel) = arg.split_once('@').unwrap_or((arg, ""));
+        let inputs: Vec<u128> = call.split(',').map(|s| s.trim().parse()).collect::<Result<_, _>>()?;
+        let incoming = parcel
+            .split('+')
+            .filter(|t| !t.is_empty())
+            .map(|t| -> Result<((u128, u128), u128)> {
+                let (id, value) = t.split_once('=').ok_or(anyhow!("transfer {t}: expected block:tx=value"))?;
+                let (block, tx) = id.split_once(':').ok_or(anyhow!("transfer {t}: expected block:tx"))?;
+                Ok(((block.parse()?, tx.parse()?), value.parse()?))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let out = world.execute_with((2, 1), (0, 0), &inputs, &incoming);
         let logs = world.logs.borrow();
         let logs = if logs.is_empty() { String::new() } else { format!(" logs={:?}", *logs) };
         match out.result {
@@ -38,7 +49,8 @@ fn main() -> Result<()> {
                     String::new()
                 };
                 let hex: String = r.data.iter().map(|b| format!("{b:02x}")).collect();
-                println!("[{arg}]  fuel={:<9} ok alkanes={} data={hex}{value}{logs}", out.fuel_used, r.alkanes.len());
+                let alkanes: Vec<String> = r.alkanes.iter().map(|((b, t), v)| format!("{b}:{t}={v}")).collect();
+                println!("[{arg}]  fuel={:<9} ok alkanes={} [{}] data={hex}{value}{logs}", out.fuel_used, r.alkanes.len(), alkanes.join(" "));
             }
             Err(e) => println!("[{arg}]  fuel={:<9} REVERT {e:?}{logs}", out.fuel_used),
         }

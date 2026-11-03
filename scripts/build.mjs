@@ -18,6 +18,7 @@ import { gzipSync } from "node:zlib";
 import { compileContract } from "../compiler/index.mjs";
 import { generateClient } from "../compiler/client.mjs";
 import { wordCallbacks, sdkCallbacks, wordAdapter } from "../compiler/word-abi.mjs";
+import { snapshotModule, SnapshotRefused } from "./snapshot.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const bin = (name) => join(root, "node_modules", ".bin", name);
@@ -55,7 +56,7 @@ function run(cmd, args, env = process.env) {
   }
 }
 
-function buildContract(name) {
+function buildContract(name, { snapshot = true } = {}) {
   const source = join(root, "contracts", name, "index.ts");
   if (!existsSync(source)) throw new Error(`no contract at ${relative(root, source)}`);
   const work = join(root, "build", name);
@@ -86,13 +87,14 @@ export function meta(): Uint8Array {
 `,
   );
 
-  buildLibrary({ entry, work, out: join(root, "dist", `${name}.wasm`), word: compiled?.word });
+  buildLibrary({ entry, work, out: join(root, "dist", `${name}.wasm`), word: compiled?.word, snapshot });
 }
 
 // The isolation fixtures use the production linker/optimizer, with additional
 // scalar exports and a benchmark-only hook into the adapter's init guard.
 export function buildLibrary({ entry, work, out, extraExports = [], benchmark = false,
-  compiler = bin("scriptc"), runtimePack, word = false }) {
+  compiler = bin("scriptc"), runtimePack, word = false, snapshot = true }) {
+  let snapshotInfo = null;
   mkdirSync(work, { recursive: true });
   mkdirSync(dirname(out), { recursive: true });
   const profile = join(work, "profile.json");
@@ -141,7 +143,9 @@ export function buildLibrary({ entry, work, out, extraExports = [], benchmark = 
     if(native.split('(import "env" "memory"').length!==2||/^\s*\(data\b/m.test(native))throw new Error("word SDK requires imported memory and no static data segments");
     writeFileSync(join(work,"word.wat"),native.replace('(import "env" "memory"','(import "contract" "memory"'));
     run(bin("wasm-as"),[...FEATURES,join(work,"word.wat"),"-o",join(work,"word.wasm")]);
-  } else if (benchmark) {
+  } else {
+    // The init export is consumed by the build-time snapshot (or kept for the
+    // isolation benchmarks); metadce removes it otherwise.
     adapterSource = join(work, "adapter.wat");
     writeFileSync(adapterSource, readFileSync(join(root, "shim", "adapter.wat"), "utf8")
       .replace("(func $ensure_initialized", '(func $ensure_initialized (export "__bench_init")'));
@@ -159,17 +163,34 @@ export function buildLibrary({ entry, work, out, extraExports = [], benchmark = 
     "-o", merged,
   ]);
 
+  const roots = (names) => JSON.stringify(names.map((e) => ({ name: e, root: true, export: e })));
+  const finalRoots = ["memory", "__execute", "__meta", ...extraExports.map((e) => e.symbol),
+    ...(benchmark ? ["__bench_init"] : [])];
   const graph = join(work, "dce-graph.json");
-  writeFileSync(
-    graph,
-    JSON.stringify(
-      ["memory", "__execute", "__meta", ...extraExports.map((e) => e.symbol),
-        ...(benchmark ? ["__bench_init"] : [])]
-        .map((e) => ({ name: e, root: true, export: e })),
-    ),
-  );
+  writeFileSync(graph, roots(finalRoots));
   const reduced = join(work, "reduced.wasm");
-  run(bin("wasm-metadce"), [...FEATURES, merged, "--graph-file", graph, "-o", reduced]);
+  // Production modules start from a build-time snapshot of initialization
+  // (scripts/snapshot.mjs). Benchmark builds keep explicit initialization
+  // because the isolation harness measures it through __bench_init.
+  if (snapshot && !benchmark) {
+    const initGraph = join(work, "dce-graph-init.json");
+    writeFileSync(initGraph, roots([...finalRoots, "__bench_init"]));
+    const withInit = join(work, "reduced-init.wasm");
+    run(bin("wasm-metadce"), [...FEATURES, merged, "--graph-file", initGraph, "-o", withInit]);
+    try {
+      const result = snapshotModule(readFileSync(withInit));
+      const snapshotted = join(work, "snapshot.wasm");
+      writeFileSync(snapshotted, result.bytes);
+      run(bin("wasm-metadce"), [...FEATURES, snapshotted, "--graph-file", graph, "-o", reduced]);
+      snapshotInfo = { pages: result.pages, segments: result.segments, dataBytes: result.dataBytes };
+    } catch (error) {
+      if (!(error instanceof SnapshotRefused)) throw error;
+      console.log(`${relative(root, out)}: initialization not snapshotted (${error.message})`);
+      run(bin("wasm-metadce"), [...FEATURES, merged, "--graph-file", graph, "-o", reduced]);
+    }
+  } else {
+    run(bin("wasm-metadce"), [...FEATURES, merged, "--graph-file", graph, "-o", reduced]);
+  }
 
   run(bin("wasm-opt"), [...FEATURES, "-Oz", "--strip-debug", "--strip-producers", reduced, "-o", out]);
 
@@ -189,11 +210,16 @@ export function buildLibrary({ entry, work, out, extraExports = [], benchmark = 
   }
   const compressed = gzipSync(bytes, { level: 9 });
   writeFileSync(`${out}.gz`, compressed);
-  console.log(`${relative(root, out)}  ${bytes.length} bytes (${compressed.length} gzipped)`);
+  console.log(`${relative(root, out)}  ${bytes.length} bytes (${compressed.length} gzipped)` +
+    (snapshotInfo ? `, initialized snapshot ${snapshotInfo.dataBytes} data bytes` : ""));
+  return { bytes: bytes.length, gzipped: compressed.length, snapshot: snapshotInfo };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  const names = process.argv.slice(2);
+  // --no-snapshot keeps per-call initialization, for A/B measurements.
+  const args = process.argv.slice(2);
+  const snapshot = !args.includes("--no-snapshot");
+  const names = args.filter((a) => !a.startsWith("--"));
   const targets = names.length > 0 ? names : readdirSync(join(root, "contracts"));
-  for (const name of targets) buildContract(name);
+  for (const name of targets) buildContract(name, { snapshot });
 }

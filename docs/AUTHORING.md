@@ -59,9 +59,26 @@ The default policy is **reject**. Counter declares it explicitly: a primitive re
 
 Using `this.assets` or `this.auth` enables an invocation-local asset ledger. It merges incoming balances with checked arithmetic, debits transfers sent through `this.assets.call`, credits the call's actual returned transfers, and forwards all remaining balances once. `this.assets.mintSelf(amount)` credits issuance of this contract's own ID. `this.auth.require(id)` checks for an incoming auth asset and, for a different contract's ID, sends one unit to opcode 1 and checks the returned data is exactly `[1]`. This is the Alkanes auth-token protocol, not address comparison.
 
-The ledger covers incoming assets, issuance, and call returns; it does not expose spending of previously retained contract balances or a general custody API. Initialized/tracked contracts reject raw runtime storage/call/reset APIs that would bypass lifecycle or accounting. Tracked contracts reject explicit `CallResponse` entrypoint returns to keep one response owner. An accounting failure after a successful external call makes the ledger unusable even if source catches the exception.
+### Custody
 
-Without tracked assets, primitive/void results preserve the earlier forwarding behavior. Explicit `CallResponse` owns the whole parcel and requires manual accounting. The legacy Token retains that API. The JS/standalone wasmi hosts model execution and rollback; the CappedToken integration suite separately verifies actual balance enforcement and transaction routing in the canonical indexer.
+By default the ledger returns everything it holds, so a contract that forgets to account for an incoming asset refunds it. Contracts that keep assets across invocations, such as pools, vaults and treasuries, move value between the ledger and the contract's **custody**, meaning its persistent Alkanes balance:
+
+| Call | Effect |
+|---|---|
+| `this.assets.received(id)` | Total of `id` in the invocation's original incoming parcel, including duplicate entries. Unaffected by later ledger changes. |
+| `this.assets.retain(id, amount)` | Moves `amount` from the ledger into custody, so it is not returned. Fails with `INSUFFICIENT_LEDGER`. For the contract's own ID this takes shares out of circulation. |
+| `this.assets.held(id)` | Spendable custody of another asset: the host balance (`env.__balance`) minus the ledger. It equals prior holdings plus amounts retained minus amounts sent in this invocation. The contract's own ID fails with `SELF_CUSTODY_UNSUPPORTED`; use `mintSelf` for issuance. |
+| `this.assets.send(id, amount)` | Moves `amount` from custody into the ledger, paying it to the caller with the response. Fails with `INSUFFICIENT_CUSTODY`, or `SELF_SEND_USE_MINT_SELF` for the contract's own ID. |
+
+`retain` and `send` are mutations, so views cannot call them. `received` and `held` are reads. The identity behind `held` follows the canonical host. Incoming assets and call returns are credited to the contract's balance before its code runs, and the response is debited afterwards (`checked_debit_with_minting`: only the contract's own ID can be paid beyond its balance). Host balance minus ledger is therefore exactly the custody that is still unspent.
+
+Store the totals a contract relies on, such as pool reserves or vault assets, instead of reading balances for pricing. Anyone can send assets to a contract, so balance-derived prices could be moved by donations. `held` is for safety checks and for deliberately folding surplus custody into stored totals.
+
+A top-level caller is always `[0,0]`, so contracts cannot identify users by caller ID. Positions are represented by tokens (pool LP shares, vault shares), and privileged operations use auth tokens.
+
+The ledger covers incoming assets, issuance, call returns and explicit custody moves. Initialized/tracked contracts reject raw runtime storage/call/reset APIs that would bypass lifecycle or accounting. Tracked contracts reject explicit `CallResponse` entrypoint returns to keep one response owner. An accounting failure after a successful external call makes the ledger unusable even if source catches the exception.
+
+Without tracked assets, primitive/void results preserve the earlier forwarding behavior. Explicit `CallResponse` owns the whole parcel and requires manual accounting. The legacy Token retains that API. The JS VM (`test/vm.mjs`) and the standalone wasmi host (`harness/`) model execution, rollback and canonical alkane balance movement. Top-level parcels are credited to the target and its response is debited. call/staticcall move assets in both directions, delegatecall moves none, and `__balance` returns the stored bytes. The CappedToken integration suite separately verifies balance enforcement and transaction routing in the canonical indexer.
 
 ## Generated artifacts and clients
 

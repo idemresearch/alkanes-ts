@@ -1,10 +1,18 @@
 import { assertWritable } from "./effects.ts";
-import { call, fuel } from "./runtime.ts";
+import { balance, call, fuel } from "./runtime.ts";
 import { AlkaneId, AlkaneTransfer, AlkaneTransferParcel, CallResponse, Cellpack, Context } from "./types.ts";
 import { add, checked, sub } from "./u128.ts";
 
-// Invocation-local accounting. Only incoming assets and successful call
-// returns enter this ledger; assets already held by the contract stay held.
+// Invocation-local accounting. Incoming assets, self issuance and successful
+// call returns enter this ledger, and whatever remains in it is returned to the
+// caller. Everything else the contract owns is custody: it stays held unless
+// the contract explicitly moves it into the ledger with send().
+//
+// The host credits incoming assets and call returns to the contract's balance
+// before code observes them, and debits the response afterwards. So for any
+// asset other than the contract's own ID, host balance minus ledger is exactly
+// the custody that may still be spent: prior holdings, plus amounts retained
+// in this invocation, minus amounts already sent.
 export class Assets {
   private balances = new Map<string, AlkaneTransfer>();
   private reconciliationFailed = false;
@@ -27,6 +35,37 @@ export class Assets {
   available(id: AlkaneId): bigint {
     const entry = this.balances.get(id.toString());
     return entry === undefined ? 0n : entry.value;
+  }
+
+  // Total of `id` in the invocation's original incoming parcel.
+  received(id: AlkaneId): bigint {
+    let total = 0n;
+    for (const transfer of this.incoming.transfers) if (transfer.id.equals(id)) total = add(total, checked(transfer.value));
+    return total;
+  }
+
+  // Spendable custody of another asset: host balance minus this ledger.
+  held(id: AlkaneId): bigint {
+    if (id.equals(this.context.myself)) throw new Error("SELF_CUSTODY_UNSUPPORTED");
+    return sub(balance(this.context.myself, id), this.available(id));
+  }
+
+  // Keeps `amount` of a ledger asset in custody instead of returning it. For
+  // the contract's own ID this takes the tokens out of circulation.
+  retain(id: AlkaneId, amount: bigint): void {
+    assertWritable();
+    const value = checked(amount);
+    if (this.available(id) < value) throw new Error("INSUFFICIENT_LEDGER");
+    this.balances.set(id.toString(), new AlkaneTransfer(id, this.available(id) - value));
+  }
+
+  // Pays `amount` of an asset held in custody to the caller with this response.
+  send(id: AlkaneId, amount: bigint): void {
+    assertWritable();
+    const value = checked(amount);
+    if (id.equals(this.context.myself)) throw new Error("SELF_SEND_USE_MINT_SELF");
+    if (this.held(id) < value) throw new Error("INSUFFICIENT_CUSTODY");
+    this.credit(new AlkaneTransferParcel().pay(id, value));
   }
 
   mintSelf(amount: bigint): void {

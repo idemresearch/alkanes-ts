@@ -6,7 +6,13 @@
 //! Every call gets a fresh instance; storage writes returned in the response
 //! commit only on success, and extcalls execute the callee nested inside the
 //! host function, as the indexer does. Fuel the callee burns is charged to the
-//! caller. Host-function fuel surcharges and alkane balances are not modeled.
+//! caller. Alkane balances follow the canonical transfer rules (alkanes-rs
+//! src/utils.rs): a top-level call credits the target with its incoming parcel
+//! and debits its response; call/staticcall move the incoming parcel caller ->
+//! callee and the response callee -> caller; delegatecall moves nothing. A debit
+//! beyond the balance fails unless the asset is the debtor's own ID, which mints
+//! it. Balances roll back with storage. Host-function fuel surcharges are not
+//! modeled.
 
 use anyhow::{anyhow, bail, Result};
 use std::cell::{Cell, RefCell};
@@ -30,6 +36,51 @@ pub fn engine() -> Engine {
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct WorldState {
     storage: HashMap<AlkaneId, Storage>,
+    /// (owner, asset) -> balance
+    balances: HashMap<(AlkaneId, AlkaneId), u128>,
+}
+
+impl WorldState {
+    fn credit(&mut self, who: AlkaneId, parcel: &[(AlkaneId, u128)]) -> Result<(), String> {
+        if who == (0, 0) {
+            return Ok(());
+        }
+        for (id, value) in parcel {
+            let entry = self.balances.entry((who, *id)).or_default();
+            *entry = entry.checked_add(*value).ok_or("balance overflow during credit_balances")?;
+        }
+        Ok(())
+    }
+
+    /// checked_debit_with_minting: an alkane may always pay out its own ID.
+    fn debit(&mut self, who: AlkaneId, parcel: &[(AlkaneId, u128)]) -> Result<(), String> {
+        if who == (0, 0) {
+            return Ok(());
+        }
+        for (id, value) in parcel {
+            let entry = self.balances.entry((who, *id)).or_default();
+            if *entry < *value {
+                if *id != who {
+                    return Err(format!("balance underflow, transferring({id:?} {value}), from({who:?}), balance({entry})"));
+                }
+                *entry = *value;
+            }
+            *entry -= *value;
+        }
+        Ok(())
+    }
+
+    /// transfer_from: each entry is debited from `from`, then credited to `to`.
+    fn transfer(&mut self, parcel: &[(AlkaneId, u128)], from: AlkaneId, to: AlkaneId) -> Result<(), String> {
+        if to == (0, 0) {
+            return Ok(());
+        }
+        for entry in parcel {
+            self.debit(from, std::slice::from_ref(entry))?;
+            self.credit(to, std::slice::from_ref(entry))?;
+        }
+        Ok(())
+    }
 }
 
 pub struct World {
@@ -154,10 +205,20 @@ fn extcall(c: &mut Caller<'_, Frame>, kind: Kind, cellpack: i32, alkanes: i32, c
         let pending = parse_storage_map(&mut &read_ab(c, checkpoint)[..])?;
         world.state.borrow_mut().storage.entry(myself).or_default().extend(pending);
         let fuel = c.get_fuel()?;
-        let outcome = match kind {
-            Kind::Delegate => world.execute_as(target, myself, c.data().caller, &inputs, &incoming, fuel),
-            _ => world.execute_as(target, target, myself, &inputs, &incoming, fuel),
+        let moved = match kind {
+            Kind::Delegate => Ok(()),
+            _ => world.state.borrow_mut().transfer(&incoming, myself, target),
         };
+        let mut outcome = match (moved, kind) {
+            (Err(e), _) => Outcome { result: Err(e), fuel_used: 0 },
+            (Ok(()), Kind::Delegate) => world.execute_as(target, myself, c.data().caller, &inputs, &incoming, fuel),
+            (Ok(()), _) => world.execute_as(target, target, myself, &inputs, &incoming, fuel),
+        };
+        if let (Ok(response), Kind::Call | Kind::Static) = (&outcome.result, kind) {
+            if let Err(e) = world.state.borrow_mut().transfer(&response.alkanes, target, myself) {
+                outcome.result = Err(e);
+            }
+        }
         if matches!(kind, Kind::Static) || outcome.result.is_err() {
             *world.state.borrow_mut() = saved;
         }
@@ -198,8 +259,15 @@ fn linker(engine: &Engine) -> Result<Linker<Frame>> {
         };
         write_ab(&mut c, v, &value)
     })?;
-    l.func_wrap("env", "__balance", |mut c: Caller<'_, Frame>, _: i32, _: i32, out: i32| {
-        write_ab(&mut c, out, &[0u8; 16]);
+    l.func_wrap("env", "__balance", |mut c: Caller<'_, Frame>, who: i32, what: i32, out: i32| {
+        let (who, what) = (read_ab(&c, who), read_ab(&c, what));
+        let id = |b: &[u8]| -> AlkaneId {
+            let mut r = b;
+            (u128_at(&mut r).unwrap_or(0), u128_at(&mut r).unwrap_or(0))
+        };
+        // Canonical __balance returns the stored bytes: empty if never set.
+        let value = c.data().world.state.borrow().balances.get(&(id(&who), id(&what))).copied();
+        write_ab(&mut c, out, &value.map(|v| v.to_le_bytes().to_vec()).unwrap_or_default());
     })?;
     l.func_wrap("env", "__request_context", |c: Caller<'_, Frame>| -> i32 { c.data().context.len() as i32 })?;
     l.func_wrap("env", "__load_context", |mut c: Caller<'_, Frame>, out: i32| -> i32 {
@@ -341,7 +409,30 @@ impl World {
     }
 
     pub fn execute(self: &Rc<World>, target: AlkaneId, caller: AlkaneId, inputs: &[u128]) -> Outcome {
-        self.execute_as(target, target, caller, inputs, &[], START_FUEL)
+        self.execute_with(target, caller, inputs, &[])
+    }
+
+    /// A top-level message: credits `target` with `incoming`, runs it, and
+    /// debits its response transfers (which leave for the transaction outputs).
+    pub fn execute_with(self: &Rc<World>, target: AlkaneId, caller: AlkaneId, inputs: &[u128], incoming: &[(AlkaneId, u128)]) -> Outcome {
+        let saved = self.snapshot();
+        if let Err(e) = self.state.borrow_mut().credit(target, incoming) {
+            return Outcome { result: Err(e), fuel_used: 0 };
+        }
+        let mut outcome = self.execute_as(target, target, caller, inputs, incoming, START_FUEL);
+        if let Ok(response) = &outcome.result {
+            if let Err(e) = self.state.borrow_mut().debit(target, &response.alkanes) {
+                outcome.result = Err(e);
+            }
+        }
+        if outcome.result.is_err() {
+            *self.state.borrow_mut() = saved;
+        }
+        outcome
+    }
+
+    pub fn balance(&self, who: AlkaneId, what: AlkaneId) -> u128 {
+        self.state.borrow().balances.get(&(who, what)).copied().unwrap_or(0)
     }
 
     pub fn meta(self: &Rc<World>, target: AlkaneId) -> Outcome {

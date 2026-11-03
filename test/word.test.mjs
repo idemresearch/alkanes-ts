@@ -45,7 +45,9 @@ test('untracked forwarding preserves duplicate and zero transfers exactly',()=>{
   const compiled=compileContract({filename:resolve('test/fixtures/word-forward.ts'),wordLowering});assert.equal(compiled.word,wordLowering);
   const work=resolve('build/word-tests',wordLowering?'forward-word':'forward-bigint');mkdirSync(work,{recursive:true});
   const entry=join(work,'entry.ts'),out=join(work,'probe.wasm');writeFileSync(entry,compiled.lowered);buildLibrary({entry,work,out,word:compiled.word});
-  const vm=new AlkanesVM();vm.deploy(target,readFileSync(out));
+  // MAX + 1 of one ID exceeds what the indexer can credit; this isolates the
+  // contract's exact parcel forwarding, so host balance movement is off.
+  const vm=new AlkanesVM({balances:false});vm.deploy(target,readFileSync(out));
   const incoming=[{id,value:MAX},{id,value:1n},{id:target,value:0n}];
   const response=vm.call({target,inputs:[0,MAX],incoming});assert.deepEqual(response.alkanes,incoming);outputs.push(response);
   assert.throws(()=>vm.call({target,inputs:[1],incoming}),/view rejects incoming assets/);
