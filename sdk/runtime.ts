@@ -146,6 +146,11 @@ export function block(): Uint8Array {
   return hostBlock();
 }
 
+// Block 800000000 holds the host's precompiled contracts. The host answers
+// them directly, without a checkpoint, storage piping or asset movement
+// (alkanes-rs vm/host_functions.rs _handle_special_extcall).
+export const PRECOMPILE_BLOCK = 800000000n;
+
 function extcall(kind: number, cellpack: Cellpack, alkanes: AlkaneTransferParcel, fuelLimit: number): CallResponse {
   const result = hostExtcall(kind, cellpack.serialize(), alkanes.serialize(), serializeStorage(), fuelLimit);
   if (result.returndata.length < 16) {
@@ -162,7 +167,8 @@ function extcall(kind: number, cellpack: Cellpack, alkanes: AlkaneTransferParcel
   // caller storage through a callback. Reads and the final response must not
   // replay a stale checkpoint over those changes. Static calls roll back the
   // checkpoint and therefore retain the caller's buffered writes.
-  if (kind !== EXTCALL_STATICCALL) cache = new Map<string, StorageEntry>();
+  // A precompile commits nothing, so the buffered writes must stay buffered.
+  if (kind !== EXTCALL_STATICCALL && cellpack.target.block !== PRECOMPILE_BLOCK) cache = new Map<string, StorageEntry>();
   return response;
 }
 

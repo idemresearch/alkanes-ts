@@ -3,18 +3,6 @@
 #include "word.c"
 HOST("__height") void host_height(N);
 HOST("__log") void host_log(N);
-static U shift_left(U v, N n) {
-  L lo = (L)v, hi = (L)(v >> 64);
-  if (!n) return v;
-  if (n >= 64) return (U)(lo << (n - 64)) << 64;
-  return ((U)((hi << n) | (lo >> (64 - n))) << 64) | (lo << n);
-}
-static U shift_right(U v, N n) {
-  L lo = (L)v, hi = (L)(v >> 64);
-  if (!n) return v;
-  if (n >= 64) return hi >> (n - 64);
-  return ((U)(hi >> n) << 64) | ((lo >> n) | (hi << (64 - n)));
-}
 
 EXPORT("w_copybytes") N copybytes(N p, N n) { return copy(p, n); }
 EXPORT("w_copyraw") N copyraw(N p, N n) { return copy(p, n); }
@@ -104,19 +92,6 @@ EXPORT("w_fromnumber") N fromnumber(Context *c, double value) {
   } else v = shift_left(mantissa, exponent - 52);
   return word(v);
 }
-EXPORT("w_tonumber") double tonumber(N p) {
-  U v = get(p);
-  L high = (L)(v >> 64), low = (L)v;
-  N bits = high ? 128 - __builtin_clzll(high) : low ? 64 - __builtin_clzll(low) : 0;
-  if (bits <= 53) return (double)low;
-  N shift = bits - 53;
-  L mantissa = (L)shift_right(v,shift);
-  U remainder = v & (shift_left(1,shift) - 1), halfway = shift_left(1,shift - 1);
-  if (remainder > halfway || (remainder == halfway && (mantissa & 1))) mantissa++;
-  L scale_bits = (L)(1023 + shift) << 52;
-  double scale; __builtin_memcpy(&scale, &scale_bits, 8);
-  return (double)mantissa * scale;
-}
 EXPORT("w_decimal") N decimal(N p) {
   U v = get(p);
   unsigned char digits[40];
@@ -165,7 +140,9 @@ EXPORT("w_call") N extcall(Context *c, N cp, N parcel, double budget) {
     }
     return 0;
   }
-  c->storage = 0;
+  // Precompiles (block 800000000) take no checkpoint and commit nothing, so
+  // the buffered writes stay valid; any other call may have changed storage.
+  if (get(cp) != (U)800000000) c->storage = 0;
   return returned;
 }
 EXPORT("w_responsepart") N responsepart(N p, N which) {

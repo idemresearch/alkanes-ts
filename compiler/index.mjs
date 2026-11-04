@@ -250,7 +250,8 @@ export function compileContract({ filename, source = readFileSync(filename, "utf
   const pureSDK = new Set(["height", "log", "balance", "sequence", "fuel", "transaction", "block", "load", "staticcall", "readU128s",
     "u128ToBytes", "bytesToU128", "utf8", "fromUtf8", "toHex", "bytesEqual", "concat", "checkedAdd", "checkedSub",
     "get", "getU128", "getString", "isEmpty", "select", "keyword", "serialize", "equals", "toString", "withData", "withU128", "withString",
-    "assert", "available", "checked", "add", "sub", "mul", "div", "mod", "bitAnd", "bitOr", "bitXor", "shl", "shr", "bitNot", "wrappingAdd", "wrappingSub", "mulDiv"]);
+    "assert", "available", "received", "held", "checked", "add", "sub", "mul", "div", "mod", "bitAnd", "bitOr", "bitXor", "shl", "shr", "bitNot", "wrappingAdd", "wrappingSub", "mulDiv",
+    "mulDivUp", "min", "max", "sqrt", "mulSqrt"]);
   const symbolOf = (node) => {
     const sym = checker.getSymbolAtLocation(node);
     return sym && (sym.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(sym) : sym);

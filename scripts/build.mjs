@@ -2,7 +2,10 @@
 // Builds contracts/<name>/index.ts into an alkanes contract at dist/<name>.wasm.
 //
 //   1. Generate an entry module exposing execute(context) and meta().
-//   2. Compile it with scriptc as a wasm32-wasi library (reactor).
+//   2. Compile it with scriptc as a wasm32-wasi library (reactor). The link
+//      goes through scripts/link.mjs, which replaces libc's vsnprintf and
+//      snprintf with shim/printf.c when every format they can receive is
+//      one it implements.
 //   3. wasm-merge it with shim/adapter.wat (alkanes ABI <-> scriptc callbacks)
 //      and shim/wasi.wat (deterministic WASI stand-ins).
 //   4. Strip every export except memory/__execute/__meta and optimize, keeping
@@ -11,13 +14,15 @@
 //      the form alkanes deployment envelopes carry.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { gzipSync } from "node:zlib";
 import { compileContract } from "../compiler/index.mjs";
 import { generateClient } from "../compiler/client.mjs";
 import { wordCallbacks, sdkCallbacks, wordAdapter } from "../compiler/word-abi.mjs";
+import { snapshotModule, SnapshotRefused } from "./snapshot.mjs";
+import { stripCustomSections } from "./printf-formats.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const bin = (name) => join(root, "node_modules", ".bin", name);
@@ -55,7 +60,32 @@ function run(cmd, args, env = process.env) {
   }
 }
 
-function buildContract(name) {
+// shim/printf.c replaces libc's vsnprintf/snprintf at scriptc's link step,
+// through the scripts/link.mjs SCRIPTC_LINKER wrapper, wherever every format
+// it can receive is one it implements. Compiled once per process; the rename
+// keeps concurrent builds (parallel test files) from reading a partial file.
+let printfObject = null;
+export function minimalPrintfObject() {
+  if (printfObject) return printfObject;
+  const object = join(root, "build", "shim", "printf.o");
+  const partial = `${object}.${process.pid}`;
+  mkdirSync(dirname(object), { recursive: true });
+  run("zig", ["cc", "--target=wasm32-wasi", "-Oz", "-c", join(root, "shim", "printf.c"), "-o", partial]);
+  renameSync(partial, object);
+  return (printfObject = object);
+}
+
+function linkerEnvironment(report) {
+  const linker = join(root, "scripts", "link.mjs");
+  try {
+    accessSync(linker, constants.X_OK);
+  } catch {
+    chmodSync(linker, 0o755); // scriptc executes SCRIPTC_LINKER directly
+  }
+  return { SCRIPTC_LINKER: linker, ALKANES_LINK_OBJECTS: minimalPrintfObject(), ALKANES_LINK_REPORT: report };
+}
+
+function buildContract(name, { snapshot = true, printf = "minimal" } = {}) {
   const source = join(root, "contracts", name, "index.ts");
   if (!existsSync(source)) throw new Error(`no contract at ${relative(root, source)}`);
   const work = join(root, "build", name);
@@ -86,13 +116,15 @@ export function meta(): Uint8Array {
 `,
   );
 
-  buildLibrary({ entry, work, out: join(root, "dist", `${name}.wasm`), word: compiled?.word });
+  buildLibrary({ entry, work, out: join(root, "dist", `${name}.wasm`), word: compiled?.word, snapshot, printf });
 }
 
 // The isolation fixtures use the production linker/optimizer, with additional
 // scalar exports and a benchmark-only hook into the adapter's init guard.
 export function buildLibrary({ entry, work, out, extraExports = [], benchmark = false,
-  compiler = bin("scriptc"), runtimePack, word = false }) {
+  compiler = bin("scriptc"), runtimePack, word = false, snapshot = true, printf = "minimal" }) {
+  if (printf !== "minimal" && printf !== "libc") throw new Error(`unknown printf option ${printf}`);
+  let snapshotInfo = null;
   mkdirSync(work, { recursive: true });
   mkdirSync(dirname(out), { recursive: true });
   const profile = join(work, "profile.json");
@@ -123,11 +155,23 @@ export function buildLibrary({ entry, work, out, extraExports = [], benchmark = 
   );
 
   const compiled = join(work, "contract.wasm");
+  const printfReport = join(work, "printf-formats.json");
+  rmSync(printfReport, { force: true });
   run(compiler, ["build", "--lib", "--profile", profile, "-o", compiled], {
     ...process.env,
     SCRIPTC_TARGET: "wasm32-wasi",
     ...(runtimePack ? { SCRIPTC_RUNTIME_PACK: runtimePack } : {}),
+    ...(printf === "minimal" ? linkerEnvironment(printfReport) : {}),
   });
+  let linkedPrintf = "libc";
+  if (printf === "minimal") {
+    // The wrapper kept the name section for its format check; the rest of
+    // the pipeline sees the module wasm-ld writes with --strip-debug.
+    const report = JSON.parse(readFileSync(printfReport, "utf8"));
+    linkedPrintf = report.printf;
+    if (linkedPrintf !== "minimal") console.log(`${relative(root, out)}: libc printf kept (${report.reason})`);
+    writeFileSync(compiled, stripCustomSections(readFileSync(compiled)));
+  }
 
   const adapter = join(work, "adapter.wasm");
   const wasi = join(work, "wasi.wasm");
@@ -141,7 +185,9 @@ export function buildLibrary({ entry, work, out, extraExports = [], benchmark = 
     if(native.split('(import "env" "memory"').length!==2||/^\s*\(data\b/m.test(native))throw new Error("word SDK requires imported memory and no static data segments");
     writeFileSync(join(work,"word.wat"),native.replace('(import "env" "memory"','(import "contract" "memory"'));
     run(bin("wasm-as"),[...FEATURES,join(work,"word.wat"),"-o",join(work,"word.wasm")]);
-  } else if (benchmark) {
+  } else {
+    // The init export is consumed by the build-time snapshot (or kept for the
+    // isolation benchmarks); metadce removes it otherwise.
     adapterSource = join(work, "adapter.wat");
     writeFileSync(adapterSource, readFileSync(join(root, "shim", "adapter.wat"), "utf8")
       .replace("(func $ensure_initialized", '(func $ensure_initialized (export "__bench_init")'));
@@ -159,17 +205,34 @@ export function buildLibrary({ entry, work, out, extraExports = [], benchmark = 
     "-o", merged,
   ]);
 
+  const roots = (names) => JSON.stringify(names.map((e) => ({ name: e, root: true, export: e })));
+  const finalRoots = ["memory", "__execute", "__meta", ...extraExports.map((e) => e.symbol),
+    ...(benchmark ? ["__bench_init"] : [])];
   const graph = join(work, "dce-graph.json");
-  writeFileSync(
-    graph,
-    JSON.stringify(
-      ["memory", "__execute", "__meta", ...extraExports.map((e) => e.symbol),
-        ...(benchmark ? ["__bench_init"] : [])]
-        .map((e) => ({ name: e, root: true, export: e })),
-    ),
-  );
+  writeFileSync(graph, roots(finalRoots));
   const reduced = join(work, "reduced.wasm");
-  run(bin("wasm-metadce"), [...FEATURES, merged, "--graph-file", graph, "-o", reduced]);
+  // Production modules start from a build-time snapshot of initialization
+  // (scripts/snapshot.mjs). Benchmark builds keep explicit initialization
+  // because the isolation harness measures it through __bench_init.
+  if (snapshot && !benchmark) {
+    const initGraph = join(work, "dce-graph-init.json");
+    writeFileSync(initGraph, roots([...finalRoots, "__bench_init"]));
+    const withInit = join(work, "reduced-init.wasm");
+    run(bin("wasm-metadce"), [...FEATURES, merged, "--graph-file", initGraph, "-o", withInit]);
+    try {
+      const result = snapshotModule(readFileSync(withInit));
+      const snapshotted = join(work, "snapshot.wasm");
+      writeFileSync(snapshotted, result.bytes);
+      run(bin("wasm-metadce"), [...FEATURES, snapshotted, "--graph-file", graph, "-o", reduced]);
+      snapshotInfo = { pages: result.pages, segments: result.segments, dataBytes: result.dataBytes };
+    } catch (error) {
+      if (!(error instanceof SnapshotRefused)) throw error;
+      console.log(`${relative(root, out)}: initialization not snapshotted (${error.message})`);
+      run(bin("wasm-metadce"), [...FEATURES, merged, "--graph-file", graph, "-o", reduced]);
+    }
+  } else {
+    run(bin("wasm-metadce"), [...FEATURES, merged, "--graph-file", graph, "-o", reduced]);
+  }
 
   run(bin("wasm-opt"), [...FEATURES, "-Oz", "--strip-debug", "--strip-producers", reduced, "-o", out]);
 
@@ -189,11 +252,18 @@ export function buildLibrary({ entry, work, out, extraExports = [], benchmark = 
   }
   const compressed = gzipSync(bytes, { level: 9 });
   writeFileSync(`${out}.gz`, compressed);
-  console.log(`${relative(root, out)}  ${bytes.length} bytes (${compressed.length} gzipped)`);
+  console.log(`${relative(root, out)}  ${bytes.length} bytes (${compressed.length} gzipped)` +
+    (snapshotInfo ? `, initialized snapshot ${snapshotInfo.dataBytes} data bytes` : ""));
+  return { bytes: bytes.length, gzipped: compressed.length, snapshot: snapshotInfo, printf: linkedPrintf };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  const names = process.argv.slice(2);
+  // --no-snapshot keeps per-call initialization and --libc-printf links
+  // libc's vsnprintf/snprintf, for A/B measurements.
+  const args = process.argv.slice(2);
+  const snapshot = !args.includes("--no-snapshot");
+  const printf = args.includes("--libc-printf") ? "libc" : "minimal";
+  const names = args.filter((a) => !a.startsWith("--"));
   const targets = names.length > 0 ? names : readdirSync(join(root, "contracts"));
-  for (const name of targets) buildContract(name);
+  for (const name of targets) buildContract(name, { snapshot, printf });
 }

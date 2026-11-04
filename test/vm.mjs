@@ -2,8 +2,13 @@
 // testing contracts without running an indexer. It implements every env.*
 // host function with the same memory layout and return conventions, a fresh
 // instance per call, storage that commits only on success, and nested
-// extcalls with rollback. It does not model fuel accounting or enforce alkane
-// balances.
+// extcalls with rollback. Alkane balances follow the canonical transfer rules
+// (alkanes-rs src/utils.rs): a top-level message credits the target with its
+// incoming parcel and debits its response transfers; call/staticcall move the
+// incoming parcel caller -> callee and the response callee -> caller;
+// delegatecall moves nothing. A debit beyond the balance fails unless the asset
+// is the debtor's own ID, which mints it. Every balance change rolls back with
+// the storage checkpoint. Fuel accounting is not modeled.
 
 const REVERT = [0x08, 0xc3, 0x79, 0xa0];
 
@@ -98,8 +103,20 @@ function readStorageMap(r) {
 class RevertError extends Error {}
 
 export class AlkanesVM {
-  constructor({ height = 880000n } = {}) {
+  // balances: false skips host-level balance movement, for tests that isolate
+  // a contract's own parcel handling with parcels the indexer could not credit.
+  constructor({ height = 880000n, balances = true } = {}) {
     this.height = BigInt(height);
+    this.enforceBalances = balances;
+    // Precompiled contracts at [800000000, tx] (alkanes-rs host_functions.rs
+    // _handle_special_extcall): block header, coinbase transaction, diesel
+    // mint count and total miner fee for the block being indexed.
+    this.precompiles = new Map([
+      [0n, () => new Uint8Array(80)],
+      [1n, () => new Uint8Array(0)],
+      [2n, () => u128.encode(0n)],
+      [3n, () => u128.encode(0n)],
+    ]);
     this.sequence = 0n;
     this.modules = new Map(); // idKey -> WebAssembly.Module
     this.storage = new Map(); // idKey -> Map<hex key, Uint8Array>
@@ -136,11 +153,58 @@ export class AlkanesVM {
   // "ALKANES: revert: ..." after rolling back, like AlkanesInstance::execute.
   call({ target, inputs, caller = { block: 0n, tx: 0n }, incoming = [], vout = 0n }) {
     const saved = this.snapshot();
+    const balances = new Map(this.balances);
     try {
-      return this.execute(this.newFrame(target, caller, inputs, incoming, vout));
+      this.credit(target, incoming);
+      const response = this.execute(this.newFrame(target, caller, inputs, incoming, vout));
+      // Top-level outgoing transfers leave the contract for the transaction's
+      // outputs (not modeled as an account here).
+      this.debit(target, response.alkanes);
+      return response;
     } catch (e) {
       this.storage = saved;
+      this.balances = balances;
       throw e;
+    }
+  }
+
+  balanceOf(who, what) {
+    return this.balances.get(`${idKey(who)}/${idKey(what)}`) ?? 0n;
+  }
+
+  credit(who, parcel) {
+    if (!this.enforceBalances || (who.block === 0n && who.tx === 0n)) return;
+    for (const t of parcel) {
+      const key = `${idKey(who)}/${idKey(t.id)}`;
+      const value = (this.balances.get(key) ?? 0n) + BigInt(t.value);
+      if (value >= 1n << 128n) throw new RevertError("balance overflow during credit_balances");
+      this.balances.set(key, value);
+    }
+  }
+
+  // checked_debit_with_minting: an alkane may always pay out its own ID.
+  debit(who, parcel) {
+    if (!this.enforceBalances || (who.block === 0n && who.tx === 0n)) return;
+    for (const t of parcel) {
+      const key = `${idKey(who)}/${idKey(t.id)}`;
+      let balance = this.balances.get(key) ?? 0n;
+      const value = BigInt(t.value);
+      if (balance < value) {
+        if (t.id.block !== who.block || t.id.tx !== who.tx) {
+          throw new RevertError(`balance underflow, transferring(${idKey(t.id)} ${value}), from(${idKey(who)}), balance(${balance})`);
+        }
+        balance = value;
+      }
+      this.balances.set(key, balance - value);
+    }
+  }
+
+  // transfer_from: each entry is debited from `from`, then credited to `to`.
+  transfer(parcel, from, to) {
+    if (to.block === 0n && to.tx === 0n) return;
+    for (const t of parcel) {
+      this.debit(from, [t]);
+      this.credit(to, [t]);
     }
   }
 
@@ -199,7 +263,8 @@ export class AlkanesVM {
         const w = new Reader(read(who));
         const t = new Reader(read(what));
         const key = `${w.u128()}:${w.u128()}/${t.u128()}:${t.u128()}`;
-        write(out, u128.encode(this.balances.get(key) ?? 0n));
+        // Canonical __balance returns the stored bytes: empty if never set.
+        write(out, this.balances.has(key) ? u128.encode(this.balances.get(key)) : new Uint8Array(0));
       },
       __request_context: () => this.serializeContext(frame).length,
       __load_context: (out) => write(out, this.serializeContext(frame)),
@@ -249,7 +314,19 @@ export class AlkanesVM {
     const inputs = [];
     while (cp.remaining() >= 16) inputs.push(cp.u128());
     const incoming = readParcel(new Reader(alkanesBytes));
+    if (target.block === 800000000n) {
+      // Answered by the host: no checkpoint, no storage piping, no transfers.
+      const precompile = this.precompiles.get(target.tx);
+      if (!precompile) {
+        frame.failed = true;
+        frame.returndata = concat([encodeParcel([]), new Uint8Array(REVERT), Buffer.from(`Unknown precompiled contract: [${target.block}, ${target.tx}]`)]);
+        return -frame.returndata.length;
+      }
+      frame.returndata = concat([encodeParcel([]), precompile()]);
+      return frame.returndata.length;
+    }
     const saved = this.snapshot();
+    const balances = new Map(this.balances);
     // The caller's uncommitted writes become visible to the callee first.
     const own = this.storageOf(frame.myself);
     for (const [k, v] of readStorageMap(new Reader(checkpointBytes))) own.set(hex(k), v);
@@ -259,13 +336,19 @@ export class AlkanesVM {
         ? { ...this.newFrame(frame.myself, frame.caller, inputs, incoming), code: target }
         : this.newFrame(target, frame.myself, inputs, incoming);
     try {
+      if (kind !== "delegatecall") this.transfer(incoming, frame.myself, target);
       const { alkanes, data } =
         kind === "delegatecall" ? this.executeDelegate(callee, target) : this.execute(callee);
-      if (kind === "staticcall") this.storage = saved;
+      if (kind !== "delegatecall") this.transfer(alkanes, target, frame.myself);
+      if (kind === "staticcall") {
+        this.storage = saved;
+        this.balances = balances;
+      }
       frame.returndata = concat([encodeParcel(alkanes), data]);
       return frame.returndata.length;
     } catch (e) {
       this.storage = saved;
+      this.balances = balances;
       // The canonical host aborts the caller when an extcall fails, even if
       // its source catches the SDK exception and returns a normal response.
       frame.failed = true;

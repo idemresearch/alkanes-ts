@@ -14,7 +14,6 @@ declare function __w_parcel(c:number):number;
 declare function __w_pay(parcel:number,b:number,t:number,value:number):number;
 declare function __w_mul(c:number,a:number,b:number):number;
 declare function __w_fromnumber(c:number,n:number):number;
-declare function __w_tonumber(p:number):number;
 declare function __w_decimal(p:number):number;
 declare function __w_height():number;
 declare function __w_log(p:number):void;
@@ -24,8 +23,11 @@ declare function __w_responsepart(p:number,which:number):number;
 declare function __w_finishresponse(c:number,parcel:number,data:number,message:Uint8Array):number;
 
 let active=0;
+// Constant buffers are built once during module initialization (captured by
+// the build-time snapshot). Callers only read them; SDK leaves copy inputs.
+const EMPTY=new Uint8Array();
 export class Bytes {
-  constructor(private p:number=0,private readonly literal:Uint8Array=new Uint8Array()){}
+  constructor(private p:number=0,private readonly literal:Uint8Array=EMPTY){}
   pointer():number { if(this.p===0)this.p=__w_copybytes(this.literal);return this.p; }
   get length():number { return this.p===0?this.literal.length:__w_size(this.p); }
 }
@@ -39,7 +41,7 @@ export function sub(a:number,b:number):number{const p=w.op(active,1,a,b);guard()
 export function mul(a:number,b:number):number{const p=__w_mul(active,a,b);guard();return p;}
 export function compare(kind:number,a:number,b:number):boolean{const v=w.op(active,kind,a,b);guard();return v!==0;}
 export function fromNumber(n:number):number{const p=__w_fromnumber(active,n);guard();return p;}
-export function toNumber(p:number):number{return __w_tonumber(p);}
+export function toNumber(p:number):number{return w.toNumber(p);}
 export function decimal(p:number):Bytes{return new Bytes(__w_decimal(p));}
 export function concat(a:Bytes,b:Bytes):Bytes{return new Bytes(__w_concat(a.pointer(),b.pointer()));}
 export function bytesEqual(a:Bytes,b:Bytes):boolean{return __w_equalbytes(a.pointer(),b.pointer())!==0;}
@@ -60,10 +62,12 @@ export class AlkaneId {
   serialize():Bytes{return concat(u128ToBytes(this.block),u128ToBytes(this.tx));}
   equals(other:AlkaneId):boolean{return compare(2,this.block,other.block)&&compare(2,this.tx,other.tx);}
 }
+// A zero-count parcel. Parcel words are immutable; pay() copies.
+const EMPTY_PARCEL=w.literal(0,0,0,0);
 class TransferCount {constructor(public readonly length:number){}}
 export class AlkaneTransferParcel {
   constructor(public p:number=0){}
-  pointer():number{if(this.p===0)this.p=w.literal(0,0,0,0);return this.p;}
+  pointer():number{if(this.p===0)this.p=EMPTY_PARCEL;return this.p;}
   get transfers():TransferCount{return new TransferCount((__w_size(this.pointer())-16)/48);}
   pay(id:AlkaneId,value:number):AlkaneTransferParcel{this.p=__w_pay(this.pointer(),id.block,id.tx,value);return this;}
 }
@@ -74,6 +78,8 @@ export class Context {
   get myself():AlkaneId{return this.id(0);}
   get caller():AlkaneId{return this.id(1);}
   get incomingAlkanes():AlkaneTransferParcel{return new AlkaneTransferParcel(__w_parcel(this.c));}
+  // Equals incomingAlkanes.transfers.length without copying the parcel.
+  get incomingCount():number{return w.incoming(this.c);}
 }
 export class Inputs {
   constructor(private readonly values:number[]){}
@@ -98,22 +104,29 @@ export function call(cp:Cellpack,parcel:AlkaneTransferParcel,budget:number):Call
 export function height():number{return __w_height();}
 export function log(value:Bytes):void{__w_log(value.pointer());}
 export function setReadOnly(value:boolean):void{w.readOnly(active,value?1:0);}
-export function raise(message:Bytes):never{__w_failbytes(active,concat(bytes(new Uint8Array([69,114,114,111,114,58,32])),message).pointer());throw 0;}
+const ERROR_PREFIX=bytes(new Uint8Array([69,114,114,111,114,58,32]));
+export function raise(message:Bytes):never{__w_failbytes(active,concat(ERROR_PREFIX,message).pointer());throw 0;}
 
+const ERROR_INPUT=new Uint8Array([69,114,114,111,114,58,32,117,110,101,120,112,101,99,116,101,100,32,101,110,100,32,111,102,32,105,110,112,117,116,32,114,101,97,100,105,110,103,32,117,49,50,56]);
+const ERROR_OVERFLOW=new Uint8Array([69,114,114,111,114,58,32,117,49,50,56,32,111,118,101,114,102,108,111,119]);
+const ERROR_UNDERFLOW=new Uint8Array([69,114,114,111,114,58,32,117,49,50,56,32,117,110,100,101,114,102,108,111,119]);
+const ERROR_VIEW=new Uint8Array([69,114,114,111,114,58,32,118,105,101,119,32,99,97,110,110,111,116,32,109,117,116,97,116,101,32,115,116,111,114,97,103,101,32,111,114,32,99,97,108,108,32,97,32,109,117,116,97,116,105,110,103,32,99,111,110,116,114,97,99,116]);
+const ERROR_EXTCALL=new Uint8Array([69,114,114,111,114,58,32,69,120,116,99,97,108,108,32,102,97,105,108,101,100,32,40,110,111,32,100,101,116,97,105,108,115,32,97,118,97,105,108,97,98,108,101,41]);
+const ERROR_EXTCALL_REVERT=new Uint8Array([69,114,114,111,114,58,32,69,120,116,99,97,108,108,32,102,97,105,108,101,100,58,32]);
 function finishError():number{
   const code=w.status(active);
-  if(code===1)return w.finish(active,0,0,new Uint8Array([69,114,114,111,114,58,32,117,110,101,120,112,101,99,116,101,100,32,101,110,100,32,111,102,32,105,110,112,117,116,32,114,101,97,100,105,110,103,32,117,49,50,56]));
-  if(code===2)return w.finish(active,0,0,new Uint8Array([69,114,114,111,114,58,32,117,49,50,56,32,111,118,101,114,102,108,111,119]));
-  if(code===3)return w.finish(active,0,0,new Uint8Array([69,114,114,111,114,58,32,117,49,50,56,32,117,110,100,101,114,102,108,111,119]));
-  if(code===6)return w.finish(active,0,0,new Uint8Array([69,114,114,111,114,58,32,118,105,101,119,32,99,97,110,110,111,116,32,109,117,116,97,116,101,32,115,116,111,114,97,103,101,32,111,114,32,99,97,108,108,32,97,32,109,117,116,97,116,105,110,103,32,99,111,110,116,114,97,99,116]));
-  if(code===10)return w.finish(active,0,0,new Uint8Array([69,114,114,111,114,58,32,69,120,116,99,97,108,108,32,102,97,105,108,101,100,32,40,110,111,32,100,101,116,97,105,108,115,32,97,118,97,105,108,97,98,108,101,41]));
-  if(code===11)return w.finish(active,0,0,new Uint8Array([69,114,114,111,114,58,32,69,120,116,99,97,108,108,32,102,97,105,108,101,100,58,32]));
-  return w.finish(active,0,0,new Uint8Array());
+  if(code===1)return w.finish(active,0,0,ERROR_INPUT);
+  if(code===2)return w.finish(active,0,0,ERROR_OVERFLOW);
+  if(code===3)return w.finish(active,0,0,ERROR_UNDERFLOW);
+  if(code===6)return w.finish(active,0,0,ERROR_VIEW);
+  if(code===10)return w.finish(active,0,0,ERROR_EXTCALL);
+  if(code===11)return w.finish(active,0,0,ERROR_EXTCALL_REVERT);
+  return w.finish(active,0,0,EMPTY);
 }
 export function executeDispatch(dispatch:(context:Context)=>CallResponse,context:Uint8Array):number{
   active=w.begin(context,0);
   try {
     guard();const response=dispatch(new Context(active));guard();
-    return __w_finishresponse(active,response.alkanes.pointer(),response.data.pointer(),new Uint8Array());
+    return __w_finishresponse(active,response.alkanes.pointer(),response.data.pointer(),EMPTY);
   }catch(error){if(!w.failed(active))throw error;return finishError();}
 }

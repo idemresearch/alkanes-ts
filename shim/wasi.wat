@@ -73,6 +73,8 @@
   (func (export "fd_seek") (param i32 i64 i32 i32) (result i32) (i32.const 52))
   (func (export "fd_read") (param i32 i32 i32 i32) (result i32) (i32.const 52))
   (func (export "fd_fdstat_get") (param i32 i32) (result i32) (i32.const 52))
+  ;; scriptc >= 0.4.3 runtimes call fcntl(F_SETFL) and discard the result.
+  (func (export "fd_fdstat_set_flags") (param i32 i32) (result i32) (i32.const 52))
   (func (export "fd_prestat_get") (param i32 i32) (result i32) (i32.const 8))
   (func (export "fd_prestat_dir_name") (param i32 i32 i32) (result i32) (i32.const 52))
 )

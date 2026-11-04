@@ -37,13 +37,13 @@
     "check:upstream-patch": "node scripts/native/check-upstream.mjs"
   },
   "devDependencies": {
-    "@scriptc/runtime-wasm32-wasi": "0.4.0",
-    "@scriptc/types": "0.4.0",
+    "@scriptc/runtime-wasm32-wasi": "0.4.7",
+    "@scriptc/types": "0.4.7",
     "binaryen": "^125.0.0",
-    "scriptc": "0.4.0",
+    "scriptc": "0.4.7",
     "typescript": "^5.9.3"
   },
   "allowScripts": {
-    "scriptc@0.4.0": true
+    "scriptc@0.4.7": true
   }
 }
