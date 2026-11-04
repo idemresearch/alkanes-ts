@@ -3,7 +3,9 @@
 The tests use the upstream Alkanes indexer and its actual transaction, balance, nested-call, rollback and wasmi implementations. No upstream source is modified.
 
 ```text
-running 9 tests
+running 11 tests
+test custody::amm_router_routes_two_hops_through_real_pools ... ok
+test custody::amm_pool_custody_matches_reserves_with_real_balances ... ok
 test examples::token_owner_wide_mint_real_balances_and_nested_rollback ... ok
 test examples::token_cross_calls_preserve_data_cache_and_failure_atomicity ... ok
 test examples::counter_checked_storage_loops_height_and_rollback ... ok
@@ -13,7 +15,7 @@ test native_words_preserve_wide_values_checked_operations_and_self_auth ... ok
 test initialization_reentry_is_blocked ... ok
 test initialization_and_numeric_boundaries ... ok
 test authentication_failures_and_reentry ... ok
-test result: ok. 9 passed; 0 failed; 0 ignored; 0 filtered out; finished in 79.46s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 filtered out; finished in 83.14s
 ```
 
 Covered: generated-client CREATE+init bytes; typed ID state; initialization gates and atomic deployment failure; actual upstream auth verification and returned assets; cap/max-u128 boundaries; failed-auth and post-auth rollback; auth and initializer reentry; callback cache invalidation; outgoing Bitcoin UTXO balances; complete TS/Rust response and storage parity. Additional Counter/Token coverage: checked wide increments/mints, numeric loops, storage fill, height, metadata responses, caller ownership, real UTXO balances and nested-call rollback.
@@ -99,6 +101,14 @@ Covered: generated-client CREATE+init bytes; typed ID state; initialization gate
     "word-relay.wasm": {
       "bytes": 79412,
       "sha256": "b6415eefa7c7c8386a6191ba6b0c449093eeeac3193ce83db391f1e1155bfb63"
+    },
+    "amm-pool.wasm": {
+      "bytes": 86228,
+      "sha256": "5e43a1b9b9b445bcaa2f803f56dc8e085cb687ce4894f4e9248983b0f1c48ccf"
+    },
+    "amm-router.wasm": {
+      "bytes": 322138,
+      "sha256": "1d6db6f9aadf2c1d6628366f023fd0d1f6fb4a526290494be2b20f81d3349e05"
     }
   }
 }
