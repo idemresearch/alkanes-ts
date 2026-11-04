@@ -79,7 +79,7 @@ $ npm test                   # rebuild, compiler/client tests, and Wasm host-mod
 $ ALKANES_RS=/path/to/alkanes-rs npm run test:runtime
 $ ALKANES_RS=/path/to/alkanes-rs npm run bench:capped -- --iterations 30
 $ ALKANES_RS=/path/to/alkanes-rs npm run test:examples
-$ ALKANES_RS=/path/to/alkanes-rs node integration/run.mjs --custody   # adds AmmPool/AmmRouter
+$ ALKANES_RS=/path/to/alkanes-rs node integration/run.mjs --custody   # adds AmmPool, AmmRouter, ShareVault, TimelockTreasury
 $ npm run build:bench:examples
 $ ALKANES_RS=/path/to/alkanes-rs npm run bench:examples -- --iterations 30 --baseline dist/examples-before
 $ npm run check:wasmi -- dist/counter.wasm --meta 0 1,5 2 3
@@ -141,7 +141,11 @@ To add a contract, create `contracts/<name>/index.ts` with a default-exported `C
   The same reports have the per-scenario times. The 1 MiB contract stack accounts for much of this ([stack report](bench/CANONICAL_STACK_SIZE_RESULTS.md), measured on f9446fd). On this 4-vCPU VM a fixed cost of about 11–13 ms per block dominates. The earlier [canonical-runtime comparison](bench/EXAMPLES_RUNTIME_RESULTS.md), [frontend comparison](bench/FRONTEND_SPEED_RESULTS.md), [previous Rust comparison](bench/SPEED_RESULTS.md), [older Rust tables](bench/README.md) and [initial isolation report](bench/ISOLATION.md) remain historical records. Fuel and CPU time are separate metrics.
 - **Host reads cost one callback per 4 bytes.** That is cheap for storage values but would add up for `transaction()`/`block()` on large blocks.
 - **Determinism** needs a proper audit before anything holds value. Known so far: floats in wasmi are software-deterministic, `Map` iteration is insertion-ordered, the clock reads 0, and randomness traps. Not yet audited: the rest of the scriptc runtime, such as hashing and GC timing.
-- **Actual runtime coverage:** CappedToken tests deployment envelopes, initialization rollback, standard-auth opcode 1, real UTXO balances, cap/u128 boundaries, reentry, caller/callee rollback and callback cache invalidation through the unmodified indexer. Counter and Token add wide increments/mints, checked loops, storage fill, height, caller ownership and cross-contract data/rollback. `delegatecall`/`staticcall` still need canonical-runtime integration coverage. The JS VM and wasmi harness now follow canonical balance movement (credit, debit, self-mint, per-entry transfers) and the 8e8 precompiles, but the custody contracts have not yet run on the canonical indexer. Production RPC/wallet/PSBT adapters and a live Bitcoin-node deployment remain follow-up work.
+- **Actual runtime coverage:** CappedToken tests deployment envelopes, initialization rollback, standard-auth opcode 1, real UTXO balances, cap/u128 boundaries, reentry, caller/callee rollback and callback cache invalidation through the unmodified indexer. Counter and Token add wide increments/mints, checked loops, storage fill, height, caller ownership and cross-contract data/rollback. The custody contracts run there too, with custody read from the indexer's balance table:
+  - AmmPool deposits, swaps and redemptions, and AmmRouter two-hop routes;
+  - ShareVault and TimelockTreasury authenticated with the upstream auth token, including vesting, the withdrawal window and expiry.
+
+  On v3.0.0-rc.4, a vault deposit costs 17,453 fuel, a pool swap 19,251 and a two-pool route 51,474 ([record](integration/CUSTODY_RESULTS_V3.md)). `delegatecall`/`staticcall` still need canonical-runtime integration coverage. The JS VM and wasmi harness now follow canonical balance movement (credit, debit, self-mint, per-entry transfers) and the 8e8 precompiles, but the custody contracts have not yet run on the canonical indexer. Production RPC/wallet/PSBT adapters and a live Bitcoin-node deployment remain follow-up work.
 
 ## Layout
 
