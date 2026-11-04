@@ -8,6 +8,8 @@ export const wordCallbacks=Object.entries({
  // Three-operand checked math (mulDiv/mulDivUp/mulSqrt/sqrt) and asset custody
  // (received/held/retain/send/myself); see shim/word.c.
  op3:['u32','u32','u32','u32','u32'],custody:['u32','u32','u32','u32','u32'],
+ // Chain queries (height/available) and external calls; see shim/word.c.
+ query:['u32','u32','u32','u32'],extcall:['u32','u32','u32','u32','u32','u32'],
 }).map(([name,params])=>({name:'__w_'+name,params,returns:['forward','readonly','fail','explain','store','mint','auth','unknown'].includes(name)?'void':name==='tonumber'?'f64':'u32'}));
 export const sdkCallbacks=[...wordCallbacks.filter(c=>['begin','status','count','incoming','input','literal','op','readonly','finish','tonumber'].includes(c.name.slice(4))),...Object.entries({
  copybytes:['bytes'],copyraw:['u32','u32'],size:['u32'],concat:['u32','u32'],equalbytes:['u32','u32'],decode:['u32','u32','u32'],

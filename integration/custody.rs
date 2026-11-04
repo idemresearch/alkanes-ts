@@ -1,12 +1,15 @@
 //! Custody contracts through the unmodified indexer: AmmPool deposits, swaps
-//! and redemptions with real UTXO balances, and AmmRouter routing through two
-//! pools. Contract custody is read from the indexer's own balance table and
-//! must always equal the pools' stored reserves.
+//! and redemptions with real UTXO balances, AmmRouter routing through two
+//! pools, and ShareVault and TimelockTreasury authenticated with the upstream
+//! auth token. Contract custody is read from the indexer's own balance table
+//! and must always back the contracts' stored totals.
 use super::*;
 
 const CUSTODY_TOKEN: &[u8] = include_bytes!("./token.wasm");
 const POOL: &[u8] = include_bytes!("./amm-pool.wasm");
 const ROUTER: &[u8] = include_bytes!("./amm-router.wasm");
+const VAULT: &[u8] = include_bytes!("./share-vault.wasm");
+const TREASURY: &[u8] = include_bytes!("./timelock-treasury.wasm");
 
 fn alkane(tx: u128) -> AlkaneId {
     AlkaneId { block: 2, tx }
@@ -40,6 +43,13 @@ fn ok(e: &Execution) -> u128 {
 fn quote(amount: u128, reserve_in: u128, reserve_out: u128) -> u128 {
     let x = amount * 997 / 1000;
     x * reserve_out / (reserve_in + x)
+}
+/// The upstream auth token at [4, 9001], its one unit in the block's first output.
+fn real_auth(height: u32) -> Block {
+    let b = block(AUTH, cp(AlkaneId { block: 3, tx: 9001 }, auth_init(None)), None, height);
+    assert!(index(&b, height).result.is_ok(), "auth token");
+    assert_eq!(balance(&b, authority()), 1);
+    b
 }
 fn report(scenario: &str, e: &Execution) {
     report!(
@@ -180,4 +190,124 @@ fn amm_router_routes_two_hops_through_real_pools() {
     for token in [&ta, &tb, &tc] {
         assert_eq!(custody(&router, token), 0);
     }
+}
+
+#[wasm_bindgen_test]
+fn share_vault_vests_harvested_yield_with_real_auth() {
+    helpers::clear();
+    let (asset, vault) = (alkane(1), alkane(2));
+    let auth = real_auth(880300);
+    // Token forwards incoming assets, so this output holds the asset and the auth unit.
+    let (funded, e) = create(CUSTODY_TOKEN, vec![0, 10_000_000], Some(outpoint(&auth, 0)), 880301);
+    assert!(e.result.is_ok(), "asset: {e:?}");
+    // Harvested yield vests over 10 blocks.
+    let (_, e) = create(VAULT, vec![0, 2, 1, 4, 9001, 10], None, 880302);
+    assert!(e.result.is_ok(), "vault: {e:?}");
+    report("share-vault deploy+initialize", &e);
+    helpers::assert_binary_deployed_to_id(vault.clone(), VAULT.to_vec()).unwrap();
+    let view = |inputs: Vec<u128>, height: u32| ok(&call(&vault, inputs, None, height).1);
+
+    // 1000 virtual shares per virtual asset: the first deposit issues 1e10
+    // shares. The auth unit is unrelated to a deposit and comes back.
+    let shares = 10_000_000_000u128;
+    let (deposited, e) = call(&vault, vec![1, 0], Some(outpoint(&funded, 0)), 880303);
+    assert_eq!(ok(&e), shares);
+    report("share-vault first deposit", &e);
+    assert_eq!(balance(&deposited, vault.clone()), shares);
+    assert_eq!(balance(&deposited, asset.clone()), 0);
+    assert_eq!(balance(&deposited, authority()), 1);
+    assert_eq!(custody(&vault, &asset), 10_000_000);
+
+    // Yield sent with an authenticated harvest is locked at height 880305,
+    // then vests linearly: locked(h) = ceil(500000 * (880315 - h) / 10).
+    let (minted, e) = call(&asset, vec![77, 500_000], Some(outpoint(&deposited, 0)), 880304);
+    assert!(e.result.is_ok(), "mint: {e:?}");
+    let (harvested, e) = call(&vault, vec![3], Some(outpoint(&minted, 0)), 880305);
+    assert_eq!(ok(&e), 500_000);
+    report("share-vault harvest (real auth + yield)", &e);
+    assert_eq!(balance(&harvested, asset.clone()), 0);
+    assert_eq!(balance(&harvested, vault.clone()), shares);
+    assert!(balance(&harvested, authority()) >= 1, "the auth unit comes back");
+    assert_eq!(custody(&vault, &asset), 10_500_000);
+    assert_eq!(view(vec![10], 880306), 10_500_000);
+    assert_eq!(view(vec![17], 880307), 400_000);
+    assert_eq!(view(vec![17], 880310), 250_000);
+    assert_eq!(view(vec![17], 880314), 50_000);
+    assert_eq!(view(vec![17], 880315), 0);
+
+    // Fully vested: every share redeems at (assets + 1) / (shares + 1000).
+    let payout = shares * (10_500_000 + 1) / (shares + 1000);
+    assert_eq!(view(vec![13, shares], 880316), payout);
+    let (redeemed, e) = call(&vault, vec![2, 0], Some(outpoint(&harvested, 0)), 880317);
+    assert_eq!(ok(&e), payout);
+    report("share-vault redeem", &e);
+    assert_eq!(balance(&redeemed, asset.clone()), payout);
+    assert_eq!(balance(&redeemed, vault.clone()), 0);
+    // Redeemed shares stay in the vault's custody, out of circulation; the
+    // virtual shares' slice of the yield stays behind.
+    assert_eq!(custody(&vault, &vault), shares);
+    assert_eq!(custody(&vault, &asset), 10_500_000 - payout);
+    assert_eq!(view(vec![10], 880318), 10_500_000 - payout);
+    assert_eq!(view(vec![11], 880319), 0);
+
+    // A deposit with a slippage bound it cannot meet reverts and refunds.
+    let (_, e) = call(&vault, vec![1, u128::MAX], Some(outpoint(&redeemed, 0)), 880320);
+    assert_revert(e, "SLIPPAGE");
+    assert_eq!(custody(&vault, &asset), 10_500_000 - payout);
+}
+
+#[wasm_bindgen_test]
+fn timelock_treasury_pays_out_inside_its_window_with_real_auth() {
+    helpers::clear();
+    let (asset, treasury) = (alkane(1), alkane(2));
+    let auth = real_auth(880200);
+    let (funded, e) = create(CUSTODY_TOKEN, vec![0, 1_000_000], Some(outpoint(&auth, 0)), 880201);
+    assert!(e.result.is_ok(), "asset: {e:?}");
+    // Withdrawals are ready 2 blocks after scheduling and expire 3 blocks later.
+    let (_, e) = create(TREASURY, vec![0, 4, 9001, 2, 3], None, 880202);
+    assert!(e.result.is_ok(), "treasury: {e:?}");
+    report("timelock-treasury deploy+initialize", &e);
+    helpers::assert_binary_deployed_to_id(treasury.clone(), TREASURY.to_vec()).unwrap();
+    let view = |inputs: Vec<u128>, height: u32| ok(&call(&treasury, inputs, None, height).1);
+
+    // A deposit keeps the asset and returns the auth unit.
+    let (deposited, e) = call(&treasury, vec![1, 2, 1], Some(outpoint(&funded, 0)), 880203);
+    assert_eq!(ok(&e), 1_000_000);
+    report("timelock-treasury deposit", &e);
+    assert_eq!(balance(&deposited, asset.clone()), 0);
+    assert_eq!(balance(&deposited, authority()), 1);
+    assert_eq!(custody(&treasury, &asset), 1_000_000);
+
+    // Scheduled at 880204: ready from 880206, expired from 880209.
+    let (scheduled, e) = call(&treasury, vec![2, 2, 1, 400_000], Some(outpoint(&deposited, 0)), 880204);
+    assert_eq!(ok(&e), 880206);
+    report("timelock-treasury schedule (real auth)", &e);
+    let units = balance(&scheduled, authority());
+    assert!(units >= 1, "the auth unit comes back");
+    let (early, e) = call(&treasury, vec![3], Some(outpoint(&scheduled, 0)), 880205);
+    assert_revert(e, "TIMELOCK_ACTIVE");
+    assert_eq!(balance(&early, authority()), units, "a revert refunds the auth units");
+    let (paid, e) = call(&treasury, vec![3], Some(outpoint(&early, 0)), 880206);
+    assert_eq!(ok(&e), 400_000);
+    report("timelock-treasury execute (real auth + payout)", &e);
+    assert_eq!(balance(&paid, asset.clone()), 400_000);
+    assert_eq!(custody(&treasury, &asset), 600_000);
+    assert_eq!(view(vec![11], 880207), 0);
+
+    // A withdrawal left past its window can no longer execute; its slot can
+    // be replaced, and the replacement cancelled.
+    let (again, e) = call(&treasury, vec![2, 2, 1, 100_000], Some(outpoint(&paid, 0)), 880208);
+    assert_eq!(ok(&e), 880210);
+    let (late, e) = call(&treasury, vec![3], Some(outpoint(&again, 0)), 880213);
+    assert_revert(e, "WITHDRAWAL_EXPIRED");
+    assert_eq!(custody(&treasury, &asset), 600_000);
+    let (replaced, e) = call(&treasury, vec![2, 2, 1, 50_000], Some(outpoint(&late, 0)), 880214);
+    assert_eq!(ok(&e), 880216);
+    assert_eq!(view(vec![12], 880215), 880216);
+    let (_, e) = call(&treasury, vec![4], Some(outpoint(&replaced, 0)), 880216);
+    assert!(e.result.is_ok(), "cancel: {e:?}");
+    report("timelock-treasury cancel (real auth)", &e);
+    assert_eq!(view(vec![11], 880217), 0);
+    assert_eq!(view(vec![13, 2, 1], 880218), 600_000);
+    assert_eq!(custody(&treasury, &asset), 600_000);
 }

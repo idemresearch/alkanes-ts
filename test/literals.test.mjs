@@ -19,11 +19,11 @@ const methods=`
 const probes={
   'word-v1':`import {Contract,view,method,type u128} from "../../sdk/authoring.ts";
 export default class Selectors extends Contract{${methods}}`,
-  // Importing the general SDK selects word-sdk-v1 instead of word-v1.
+  // Logging through the general SDK selects word-sdk-v1 instead of word-v1.
   'word-sdk-v1':`import {Contract,view,method,type u128} from "../../sdk/authoring.ts";
-import {height} from "../../sdk/index.ts";
+import {height,log} from "../../sdk/index.ts";
 export default class Selectors extends Contract{${methods}
-  @view({opcode:4n}) h():u128{return height();}}`,
+  @view({opcode:4n}) h():u128{log("probe");return height();}}`,
 };
 const calls=[[1n],[S-1n],[S],[S+1n],[S-2n],[(1n<<64n)+1n],[1n<<64n],[1n+(1n<<64n)+(1n<<96n)],[1n+S],[2n],[3n],[5n],[MAX],[0n],[]];
 

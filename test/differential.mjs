@@ -32,9 +32,10 @@ const show=value=>JSON.stringify(value,(_,v)=>typeof v==='bigint'?v.toString():v
 // identical responses (alkanes + data) or revert messages, and (with state)
 // identical committed storage and host balances after every call. An
 // expectation is 'ok', a RegExp for the revert message, or null (either).
-// A step's optional before(vm) runs on both VMs first (e.g. to corrupt state).
-export function differential(pair,target,steps,options={},{state=true}={}){
- const vms=pair.map(({binary})=>{const vm=new AlkanesVM(options);vm.deploy(target,binary);return vm;});
+// A step's optional before(vm) runs on both VMs first (e.g. to corrupt state),
+// and setup(vm) prepares each VM once after the target is deployed.
+export function differential(pair,target,steps,options={},{state=true,setup}={}){
+ const vms=pair.map(({binary})=>{const vm=new AlkanesVM(options);vm.deploy(target,binary);setup?.(vm);return vm;});
  const results=[];
  for(const [i,[step,expected]] of steps.entries()){
   const [reference,word]=vms.map(vm=>{step.before?.(vm);return outcome(vm,{target,...step});});

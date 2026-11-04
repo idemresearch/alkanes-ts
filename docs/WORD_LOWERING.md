@@ -47,6 +47,22 @@ That narrow path requires imports from the authoring entry point and has no ordi
 
 These operations use a separate `w_op3` leaf rather than extending `op()`. wasmi charges each call for its callee's register frame, and Binaryen inlines single-caller helpers, so wide code reachable from `op()` would tax every comparison and addition; keeping it apart leaves CappedToken, Counter and Token byte-identical. `test/word-custody.test.mjs` and `test/word-math.test.mjs` compare both backends call for call (responses, revert messages, storage and balances), and check the C leaves directly against BigInt.
 
+### Chain queries and external calls
+
+`word-v1` also lowers [ShareVault](../contracts/share-vault/index.ts), [TimelockTreasury](../contracts/timelock-treasury/index.ts) and [AmmRouter](../contracts/amm-router/index.ts). It accepts `height()` imported from `sdk/runtime.ts` or `sdk/index.ts`. It accepts the `AlkaneId`, `Cellpack` and `AlkaneTransferParcel` constructors imported from `sdk/types.ts` or `sdk/index.ts`. It also lowers `a.equals(b)` on IDs, `new AlkaneId(block, tx)`, `this.assets.available(id)`, and `this.assets.call(new Cellpack(target, [u128, ...]), new AlkaneTransferParcel().pay(id, amount)..., fuel)`. The call must be a statement whose response is unused, and the fuel limit must be an integer literal. Imports must be unaliased named value imports, and no parameter or local may shadow an imported name.
+
+Two new leaves implement these, so the existing leaves are unchanged:
+
+- `w_query` reads the height (the host's u64, zero-extended like `bytesToU128`) and, for `available`, the ledger amount. That lookup never inserts an entry.
+- `w_extcall` fills a call builder after every argument has been evaluated in JavaScript order, then follows `sdk/assets.ts` `Assets.call`:
+  1. the view check;
+  2. `PRECOMPILE_TAKES_NO_ASSETS` for a precompile target with transfers;
+  3. an in-order checked debit of each transfer from the ledger;
+  4. one host call with the dirty-entry checkpoint;
+  5. response handling as in `sdk/runtime.ts`. A revert carrying the revert selector and a message reports `Extcall failed: <message>`; any other revert reports `Extcall failed (no details available)`. A successful call clears the storage cache unless the target is a precompile, and the returned assets are credited to the ledger.
+
+Auth uses the same host-call path. That also fixed two auth revert messages that differed from the bigint backend: revert data that is only the selector, and revert data without one. The canonical host never produces either, because it always reverts with `ALKANES: revert: ...`. One difference remains: both word paths copy a callee's revert message as raw bytes. The bigint backend decodes it as UTF-8 and encodes it again, so only invalid UTF-8 in a callee's message would come out differently. `test/word-advanced.test.mjs` runs the three contracts on both backends call for call, including the auth modes, a reentrant authority, uninitialized, empty, missing and hostile pools, and the vesting and timelock boundaries.
+
 An uncaught failure latches the first error and produces the same Alkanes revert protocol. This is valid for the accepted subset because it cannot catch or inspect intermediate exceptions. Source that does so remains on the general backend. Scope and statement boundaries are preserved; source names cannot collide with compiler-private identifiers.
 
 ## SDK behavior

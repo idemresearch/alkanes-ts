@@ -110,8 +110,11 @@ To add a contract, create `contracts/<name>/index.ts` with a default-exported `C
   - CappedToken: 70 KB / 36 KB
   - Token: 93 KB / 44 KB
   - AmmPool: 86 KB / 40 KB
+  - ShareVault: 91 KB / 42 KB
+  - TimelockTreasury: 83 KB / 39 KB
+  - AmmRouter: 71 KB / 36 KB
 
-  The optimized Rust twins built against rc.4 are 123 KB, 134 KB and 130 KB. The vault, treasury and router still use the general bigint backend and are 320–343 KB.
+  The optimized Rust twins built against rc.4 are 123 KB, 134 KB and 130 KB. The vault, treasury and router were 320–343 KB on the general bigint backend before [word lowering](docs/WORD_LOWERING.md#chain-queries-and-external-calls) took over their chain queries and external calls. That also cut their fuel by 68–92% ([report](bench/ADVANCED_WORD_RESULTS.md)).
 - **Shadow stack:** `scripts/link.mjs` links contracts with a 1 MiB stack, the size Rust uses. Zig's default for wasm32 is 16 MiB, which gave every instance about 17 MB of initial memory and made each Counter/Token call about 2.5 ms slower on the canonical indexer ([report](bench/CANONICAL_STACK_SIZE_RESULTS.md)). The stack stays first, so an overflow traps. `buildLibrary({ stackSize: null })` keeps the toolchain default.
 - **Fuel:** on the canonical indexer of the latest alkanes-rs release (v3.0.0-rc.4), including host and storage charges, TS uses less fuel than Rust O3/LTO plus wasm-opt:
   - 4.5–5.6× less for single Counter and Token operations;

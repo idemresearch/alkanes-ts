@@ -57,3 +57,17 @@ export function send(c:number,id:Id,amount:number):void{__w_custody(c,3,id.block
 export function myself(c:number):Id{const p=__w_custody(c,4,0,0,0);return new Id(p,p+16);}
 // An AlkaneId returned by a lowered helper: a 32-byte block/tx word pair.
 export function at(p:number):Id{return new Id(p,p+16);}
+// Chain queries, ledger reads and external calls (shim/word.c w_query and
+// w_extcall). Query kinds: 0 height, 1 available. An external call is built
+// after its arguments are evaluated: cellpack(target, inputs | transfers << 16),
+// then each arg and pay in source order, then invoke with a fuel word.
+declare function __w_query(c:number,kind:number,block:number,tx:number):number;
+declare function __w_extcall(c:number,kind:number,p:number,a:number,b:number,d:number):number;
+export function height(c:number):number{return __w_query(c,0,0,0);}
+export function available(c:number,id:Id):number{return __w_query(c,1,id.block,id.tx);}
+// AlkaneId.equals: block, then tx, like the bigint backend.
+export function same(c:number,a:Id,b:Id):boolean{return __w_op(c,2,a.block,b.block)!==0&&__w_op(c,2,a.tx,b.tx)!==0;}
+export function cellpack(c:number,target:Id,counts:number):number{return __w_extcall(c,0,0,target.block,target.tx,counts);}
+export function arg(c:number,p:number,value:number):void{__w_extcall(c,1,p,value,0,0);}
+export function pay(c:number,p:number,id:Id,value:number):void{__w_extcall(c,2,p,id.block,id.tx,value);}
+export function invoke(c:number,p:number,fuel:number):void{__w_extcall(c,3,p,fuel,0,0);}
