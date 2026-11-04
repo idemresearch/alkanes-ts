@@ -34,9 +34,9 @@ function fail(message) {
 }
 
 const objects = (process.env.ALKANES_LINK_OBJECTS ?? "").split(delimiter).filter(Boolean);
-if (objects.length === 0) fail("ALKANES_LINK_OBJECTS names no object files");
 for (const object of objects) if (!existsSync(object)) fail(`missing object ${object}`);
 const report = process.env.ALKANES_LINK_REPORT;
+if (report && objects.length === 0) fail("ALKANES_LINK_REPORT needs the printf replacement in ALKANES_LINK_OBJECTS");
 
 let args = process.argv.slice(2);
 const output = args.lastIndexOf("-o");
@@ -48,8 +48,11 @@ if (target < 0 || !/^wasm32-wasi/.test(args[target + 1] ?? "")) {
 const outFile = args[output + 1];
 if (report) args = args.filter((arg) => arg !== "-Wl,--strip-debug");
 // zig cc gives wasm32 modules a 16 MiB shadow stack, placed before the data,
-// so every instance starts with about 17 MB of linear memory. A contract
-// stack this deep is never needed; ALKANES_STACK_SIZE (bytes) sets it.
+// so every instance would start with about 17 MB of linear memory. Alkanes
+// grows each instance to 512 pages, and on the canonical indexer the larger
+// initial memory made every Counter/Token call about 2.5 ms slower.
+// ALKANES_STACK_SIZE (bytes; buildLibrary's stackSize) sets it. The stack
+// stays first, so an overflow traps below address 0 instead of reaching data.
 const stackSize = process.env.ALKANES_STACK_SIZE;
 if (stackSize !== undefined) {
   if (!/^[1-9][0-9]*$/.test(stackSize) || Number(stackSize) % 16 !== 0) fail(`ALKANES_STACK_SIZE must be a positive multiple of 16, got ${stackSize}`);

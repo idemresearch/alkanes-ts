@@ -15,7 +15,7 @@ test native_words_preserve_wide_values_checked_operations_and_self_auth ... ok
 test initialization_reentry_is_blocked ... ok
 test initialization_and_numeric_boundaries ... ok
 test authentication_failures_and_reentry ... ok
-test result: ok. 11 passed; 0 failed; 0 ignored; 0 filtered out; finished in 83.14s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 filtered out; finished in 79.32s
 ```
 
 Covered: generated-client CREATE+init bytes; typed ID state; initialization gates and atomic deployment failure; actual upstream auth verification and returned assets; cap/max-u128 boundaries; failed-auth and post-auth rollback; auth and initializer reentry; callback cache invalidation; outgoing Bitcoin UTXO balances; complete TS/Rust response and storage parity. Additional Counter/Token coverage: checked wide increments/mints, numeric loops, storage fill, height, metadata responses, caller ownership, real UTXO balances and nested-call rollback.
@@ -39,8 +39,8 @@ Covered: generated-client CREATE+init bytes; typed ID state; initialization gate
   "lockSHA256": "d505349e7198a391195700899067d6371ba96e4b0a87d33707b36cc81d3f5945",
   "artifacts": {
     "capped-token.wasm": {
-      "bytes": 70476,
-      "sha256": "891cffd1eaf43badbafca3f471e440bbd429005164d03cfc0b5b6faf060d13e2"
+      "bytes": 70364,
+      "sha256": "828b2422dad7c8283e9adf84396af93e17259324d8e4a5c12887adc496338e1d"
     },
     "rust-capped-token.wasm": {
       "bytes": 175375,
@@ -59,28 +59,28 @@ Covered: generated-client CREATE+init bytes; typed ID state; initialization gate
       "sha256": "e0b4933736043edf5edfaa6af74aa6f86a11192ed8ab6d80bf02eb07f059a26e"
     },
     "init-probe.wasm": {
-      "bytes": 66561,
-      "sha256": "959fd9c18a0c9a0942a69a8e528b874b9e4b0b7322c010295c84329b2f96a7cd"
+      "bytes": 66459,
+      "sha256": "2c4ffd491d17c36adb2ffbd4c9d72d6df0ef22f02f5ab95408a399aab47e4e85"
     },
     "cache-caller.wasm": {
-      "bytes": 87927,
-      "sha256": "6f5ef6b57a183042e8d185f6e6e24a2ffbe519bcee37086753302f0e0ab7a86d"
+      "bytes": 87817,
+      "sha256": "b3a5a6228bc355e13331b246602ff0c8b151d4ec1c0de65b1dd459a380c03fd6"
     },
     "cache-callee.wasm": {
-      "bytes": 84755,
-      "sha256": "38aa4b8bc03bc7e2b5038cad52e8b9181aa0768ccca0938d617d90201d284bb4"
+      "bytes": 84650,
+      "sha256": "4b81a1e32cac5653cced3d39c9ca6a2f0ddf7762e763353e04e34254ca6aa520"
     },
     "word.wasm": {
-      "bytes": 77743,
-      "sha256": "d63faccbc19e6c022151e40664270471e0009be555ef42d0dcf9d9e2adff8e60"
+      "bytes": 77621,
+      "sha256": "706ce2fe2ca7b7793cc5f00081b9eccf5f62aeb459c690ae443581a376a3307d"
     },
     "counter.wasm": {
-      "bytes": 85559,
-      "sha256": "a2cb76fd58db2382a984c4a7d8fa8dcbd7c35cc19a752ef037a2c6d35588e462"
+      "bytes": 85430,
+      "sha256": "46154531f68c961babf5161d289b6014987d8947086e49703edc48df1cf939de"
     },
     "token.wasm": {
-      "bytes": 93412,
-      "sha256": "284a7e9dbd44f39a2898b6893a43b805d1b5bdc41110ce6ca8b4e71c6a641ee0"
+      "bytes": 93286,
+      "sha256": "53b0076e9eb057e5f2a2be12badc717e76dda267159bbbf497eb4133d375b238"
     },
     "counter-rust.wasm": {
       "bytes": 160411,
@@ -99,16 +99,16 @@ Covered: generated-client CREATE+init bytes; typed ID state; initialization gate
       "sha256": "ebb444a8bb6e15d6d638d768d9a64e6359b5f1783e497692d001b29e1041fc0c"
     },
     "word-relay.wasm": {
-      "bytes": 79412,
-      "sha256": "b6415eefa7c7c8386a6191ba6b0c449093eeeac3193ce83db391f1e1155bfb63"
+      "bytes": 79310,
+      "sha256": "52d232847cb711d0d8ce63390c481dbf00a0f8190e26f0585379f163c22cfe73"
     },
     "amm-pool.wasm": {
-      "bytes": 86228,
-      "sha256": "5e43a1b9b9b445bcaa2f803f56dc8e085cb687ce4894f4e9248983b0f1c48ccf"
+      "bytes": 86094,
+      "sha256": "8cc73b9c1c1fb752c186ff0c3fffddffc85b2c4292a7fa752808e15cce08192d"
     },
     "amm-router.wasm": {
-      "bytes": 322138,
-      "sha256": "1d6db6f9aadf2c1d6628366f023fd0d1f6fb4a526290494be2b20f81d3349e05"
+      "bytes": 321937,
+      "sha256": "9509f4df9d4c86727c1945865b5f42593e4d51dacd4b0451ee3e164670b0d290"
     }
   }
 }

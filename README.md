@@ -64,32 +64,34 @@ The [frontend fuel comparison](bench/FRONTEND_FUEL_RESULTS.md) records the new c
 
 The [CappedToken optimization comparison](bench/CAPPED_TOKEN_OPTIMIZATION_RESULTS.md) runs the original bigint representation, the new fixed-width lowering, and unchanged optimized Rust through the actual Alkanes indexer. [Compiler/SDK isolation](bench/CAPPED_TOKEN_ISOLATION_RESULTS.md) separates compilation, startup and execution and tests SDK algorithm alternatives. [Fixed-width lowering](docs/WORD_LOWERING.md) explains the supported subset and the C helpers compiled into the same metered Wasm module. scriptc still compiles the contract methods. [Integration results](integration/RESULTS.md) record the upstream revision and hashes; the [first CappedToken benchmark](bench/CAPPED_TOKEN_RESULTS.md) remains a historical baseline.
 
-In the paired 30-run comparison, authenticated mint uses 108,865 fuel versus 197,787 for Rust O3/LTO plus wasm-opt O3, and takes 5.71 ms versus 6.90 ms. Wide mint and all three views also beat optimized Rust in fuel and local indexing time. Fresh deployment timing includes chain bootstrap and does not establish isolated initializer speed.
+In the [current canonical comparison](bench/CANONICAL_STACK_SIZE_RESULTS.md) (scriptc 0.4.7, alkanes-rs f9446fd, 30 measured runs), authenticated mint uses 82,045 fuel versus 197,787 for Rust O3/LTO plus wasm-opt O3. The supply view uses 4,008 versus 51,454 and indexes in 11.8 ms versus 16.0 ms. Counter and Token use 4–6× less fuel than optimized Rust and index 14–16% faster. The earlier reports below were measured on an Apple M3 Max with scriptc 0.4.0. Fresh deployment timing includes chain bootstrap and does not establish isolated initializer speed.
 
 The [Counter/Token runtime comparison](bench/EXAMPLES_RUNTIME_RESULTS.md) uses the same canonical indexer, complete response/storage checks and actual UTXO balances. Counter's Rust baseline has the same numeric sum fast path as TS; both Rust O3/LTO and Rust plus wasm-opt O3 are measured. [Verification results](integration/EXAMPLES_RESULTS.md) include ownership rejection, wide values and nested rollback.
 
 ```console
 $ npm install
 $ npm run build              # every contract in contracts/, or: npm run build -- counter
-dist/capped-token.wasm  ~108 KB (~47 KB gzipped)
-dist/counter.wasm  ~111 KB (~49 KB gzipped)
-dist/token.wasm  ~106 KB (~48 KB gzipped)
+dist/amm-pool.wasm  86094 bytes (40296 gzipped), initialized snapshot ...
+dist/capped-token.wasm  70364 bytes (35662 gzipped), initialized snapshot ...
+dist/counter.wasm  85430 bytes (41013 gzipped), initialized snapshot ...
+dist/token.wasm  93286 bytes (44144 gzipped), initialized snapshot ...
 $ npm test                   # rebuild, compiler/client tests, and Wasm host-model tests
 $ ALKANES_RS=/path/to/alkanes-rs npm run test:runtime
 $ ALKANES_RS=/path/to/alkanes-rs npm run bench:capped -- --iterations 30
 $ ALKANES_RS=/path/to/alkanes-rs npm run test:examples
+$ ALKANES_RS=/path/to/alkanes-rs node integration/run.mjs --custody   # adds AmmPool/AmmRouter
 $ npm run build:bench:examples
 $ ALKANES_RS=/path/to/alkanes-rs npm run bench:examples -- --iterations 30 --baseline dist/examples-before
 $ npm run check:wasmi -- dist/counter.wasm --meta 0 1,5 2 3
-loaded dist/counter.wasm (224679 bytes) under wasmi 0.37.2
-__meta  fuel=12311     { "contract": "Counter", ... }
-[0]  fuel=44472     ok alkanes=0 data=
-[1,5]  fuel=48904     ok alkanes=0 data=05000000000000000000000000000000 u128=5
-[2]  fuel=38721     ok alkanes=0 data=05000000000000000000000000000000 u128=5
-[3]  fuel=48932     REVERT "Error: intentional failure"
+loaded dist/counter.wasm (85430 bytes) under wasmi 0.37.2
+__meta  fuel=371       { "contract": "Counter", ... }
+[0]  fuel=4761      ok alkanes=0 [] data=
+[1,5]  fuel=5749      ok alkanes=0 [] data=05000000000000000000000000000000 u128=5
+[2]  fuel=3890      ok alkanes=0 [] data=05000000000000000000000000000000 u128=5
+[3]  fuel=4721      REVERT "Error: intentional failure"
 ```
 
-Each argument to `check:wasmi` is one call, given as comma-separated u128 inputs with the opcode first. Storage persists between calls.
+Each argument to `check:wasmi` is one call, given as comma-separated u128 inputs with the opcode first, optionally followed by an incoming parcel such as `@2:11=1000+2:12=4000`. `--deploy block:tx=other.wasm` adds contracts for cross-contract calls. Storage and alkane balances persist between calls. This harness counts instruction fuel only, without the canonical host and storage charges.
 
 To add a contract, create `contracts/<name>/index.ts` with a default-exported `Contract`, then run `npm run build -- <name>`.
 
@@ -103,9 +105,25 @@ To add a contract, create `contracts/<name>/index.ts` with a default-exported `C
 
 - **What compiles:** scriptc handled everything the SDK needed, including classes, closures, `bigint` arithmetic for u128, `Map`, `Uint8Array`, `DataView`, `TextEncoder`/`TextDecoder`, `JSON.stringify` and try/catch. Two rough edges: `number.toString(radix)` is refused, and indexing a `bigint[]` is typed `bigint | undefined`, which is why handlers get an `Inputs` wrapper.
 - **Engine compatibility:** the output uses only bulk-memory, sign-ext, saturating float-to-int and mutable globals, all supported by wasmi 0.37 (no SIMD). The build pins wasm-opt to those features.
-- **Size:** about 111 KB raw / 49 KB gzipped for class Counter, 108 KB / 47 KB for CappedToken, and 106 KB / 48 KB for legacy Token, including the scriptc runtime.
-- **Fuel:** Counter reads, initialization and increments use about 39K–49K instruction fuel. The [frontend comparison](bench/FRONTEND_FUEL_RESULTS.md) measures the class frontend against the previous implementation, including the cost of fully checked bigint loops. The [codec report](bench/SDK_OPTIMIZATION_RESULTS.md) and [execution report](bench/EXECUTION_RESULTS.md) record earlier optimization passes. Bigint-heavy loops remain expensive; Counter uses numbers only within a proven exact range.
-- **Execution speed:** the [current canonical-runtime comparison](bench/EXAMPLES_RUNTIME_RESULTS.md) measures Counter and Token after fixed-width lowering, including the matched numeric Rust loop and wasm-opt O3. The [frontend comparison](bench/FRONTEND_SPEED_RESULTS.md), [previous Rust comparison](bench/SPEED_RESULTS.md), [older Rust tables](bench/README.md) and [initial isolation report](bench/ISOLATION.md) remain historical records. Fuel and CPU time are separate metrics.
+- **Size:** including the scriptc runtime:
+  - Counter: 85 KB raw / 41 KB gzipped
+  - CappedToken: 70 KB / 36 KB
+  - Token: 93 KB / 44 KB
+  - AmmPool: 86 KB / 40 KB
+
+  The optimized Rust twins are 122 KB, 133 KB and 130 KB. The vault, treasury and router still use the general bigint backend and are 320–343 KB.
+- **Shadow stack:** `scripts/link.mjs` links contracts with a 1 MiB stack, the size Rust uses. Zig's default for wasm32 is 16 MiB, which gave every instance about 17 MB of initial memory and made each Counter/Token call about 2.5 ms slower on the canonical indexer ([report](bench/CANONICAL_STACK_SIZE_RESULTS.md)). The stack stays first, so an overflow traps. `buildLibrary({ stackSize: null })` keeps the toolchain default.
+- **Fuel:** on the canonical indexer, including host and storage charges, TS uses 4–6× less fuel than Rust O3/LTO plus wasm-opt for Counter and Token, and 12.8× less for CappedToken views:
+
+  | Call | TS | Rust |
+  |---|---:|---:|
+  | Counter read | 8,033 | 43,351 |
+  | Counter increment | 10,884 | 50,467 |
+  | Token mint | 12,452 | 73,784 |
+  | CappedToken supply view | 4,008 | 51,454 |
+
+  Sources: [Counter/Token](bench/CANONICAL_EXAMPLES_0.4.7.md), [CappedToken](bench/CANONICAL_CAPPED_TOKEN_0.4.7.md). Most of the reduction comes from the [initialization snapshot](docs/SNAPSHOT.md) and from hoisting literals into it; the [scriptc 0.4.7 comparison](bench/SCRIPTC_047_RESULTS.md) breaks it down by variant. The [frontend comparison](bench/FRONTEND_FUEL_RESULTS.md), [codec report](bench/SDK_OPTIMIZATION_RESULTS.md) and [execution report](bench/EXECUTION_RESULTS.md) record earlier optimization passes. Bigint-heavy loops remain expensive; Counter uses numbers only within a proven exact range.
+- **Execution speed:** with 1 MiB contract stacks, Counter and Token index 14–16% faster than Rust O3/LTO plus wasm-opt on the canonical indexer, and CappedToken views about 25% faster ([report](bench/CANONICAL_STACK_SIZE_RESULTS.md)). On that 4-vCPU VM a fixed cost of about 11–13 ms per block dominates. The earlier [canonical-runtime comparison](bench/EXAMPLES_RUNTIME_RESULTS.md), [frontend comparison](bench/FRONTEND_SPEED_RESULTS.md), [previous Rust comparison](bench/SPEED_RESULTS.md), [older Rust tables](bench/README.md) and [initial isolation report](bench/ISOLATION.md) remain historical records. Fuel and CPU time are separate metrics.
 - **Host reads cost one callback per 4 bytes.** That is cheap for storage values but would add up for `transaction()`/`block()` on large blocks.
 - **Determinism** needs a proper audit before anything holds value. Known so far: floats in wasmi are software-deterministic, `Map` iteration is insertion-ordered, the clock reads 0, and randomness traps. Not yet audited: the rest of the scriptc runtime, such as hashing and GC timing.
 - **Actual runtime coverage:** CappedToken tests deployment envelopes, initialization rollback, standard-auth opcode 1, real UTXO balances, cap/u128 boundaries, reentry, caller/callee rollback and callback cache invalidation through the unmodified indexer. Counter and Token add wide increments/mints, checked loops, storage fill, height, caller ownership and cross-contract data/rollback. `delegatecall`/`staticcall` still need canonical-runtime integration coverage. The JS VM and wasmi harness now follow canonical balance movement (credit, debit, self-mint, per-entry transfers) and the 8e8 precompiles, but the custody contracts have not yet run on the canonical indexer. Production RPC/wallet/PSBT adapters and a live Bitcoin-node deployment remain follow-up work.
