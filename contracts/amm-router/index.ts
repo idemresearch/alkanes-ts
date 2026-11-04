@@ -15,8 +15,12 @@ import { height } from "../../sdk/runtime.ts";
 // Whatever remains in the ledger is returned to the caller: the final output,
 // unrelated incoming assets and any of the caller's own intermediate-token
 // balance that arrived with the call. The router's balances therefore stay
-// zero. Any failure (a pool revert, which aborts the router, or a router
-// check) reverts the whole route, including hops that already succeeded.
+// zero. Any failure reverts the whole route, including hops that already
+// succeeded: a router check, or a pool revert. Before alkanes-rs v3, a pool
+// revert aborts the router outright. From v3 it returns to the router as a
+// failed call, and the router reverts in turn. Because the pool was given all
+// of the router's remaining fuel, that revert can surface as fuel exhaustion
+// rather than "Extcall failed: ...".
 //
 // Pools are caller-chosen, untrusted IDs, restricted only to the blocks that
 // hold deployed contracts (see hop). No @init or reentrancy lock is
@@ -86,13 +90,15 @@ export default class AmmRouter extends Contract {
     assert(!tokenIn.equals(tokenOut), "IDENTICAL_TOKENS");
     const before = this.assets.available(tokenOut);
     // The fuel argument is a constant (Number.MAX_SAFE_INTEGER) instead of a
-    // per-hop fuel() read. The canonical host ignores it: handle_extcall in
-    // alkanes-rs crates/alkanes/src/vm/host_functions.rs takes it as an unused
-    // `_start_fuel` and runs the callee with all of the caller's remaining
-    // fuel, charging back what the callee used; the test VM and the wasmi
-    // harness ignore it as well. So reading fuel() bought nothing, and this,
-    // the largest value the f64 host boundary carries exactly, would still
-    // mean "everything left" to a host that did treat it as a cap.
+    // per-hop fuel() read; the router never imports __fuel.
+    // - Before alkanes-rs v3, handle_extcall in vm/host_functions.rs ignores
+    //   the argument (`_start_fuel`) and gives the callee all of the caller's
+    //   remaining fuel.
+    // - From v3, past POST_AUDIT_FORK_HEIGHT, it caps the callee at
+    //   min(argument, remaining). This value is far above any remaining fuel,
+    //   so it still means "everything left".
+    // - The test VM and the wasmi harness ignore the argument.
+    // This is the largest value the f64 host boundary carries exactly.
     this.assets.call(new Cellpack(pool, [3n, 0n]), new AlkaneTransferParcel().pay(tokenIn, amountIn), 9_007_199_254_740_991);
     const amountOut = this.assets.available(tokenOut) - before;
     assert(amountOut > 0n, "INSUFFICIENT_HOP_OUTPUT");

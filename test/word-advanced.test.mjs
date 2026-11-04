@@ -85,7 +85,8 @@ test('ShareVault word-v1 matches the bigint backend call for call, through vesti
 test('TimelockTreasury word-v1 matches the bigint backend call for call, across the timelock window',()=>{
   const treasury={block:2n,tx:1n},A={block:2n,tx:5n},B={block:2n,tx:6n};
   const pair=buildPair('timelock-treasury','contracts/timelock-treasury/index.ts');
-  const init=(who,delay,grace)=>({inputs:[0,...ids(who),delay,grace]});
+  // The initializer authenticates the authority, so a deployment presents a unit.
+  const init=(who,delay,grace,incoming=auth())=>({inputs:[0,...ids(who),delay,grace],incoming});
   const deposit=(id,incoming)=>({inputs:[1,...ids(id)],incoming});
   const schedule=(id,amount,...extra)=>({inputs:[2,...ids(id),amount],incoming:auth(...extra)});
   const execute=(...extra)=>({inputs:[3],incoming:auth(...extra)});
@@ -98,7 +99,10 @@ test('TimelockTreasury word-v1 matches the bigint backend call for call, across 
     [init({block:3n,tx:1n},10,5),/INVALID_AUTHORITY/],[init(treasury,10,5),/SELF_AUTHORITY/],
     [init(authority,1_051_201,5),/DELAY_TOO_LONG/],[init(authority,10,0),/INVALID_GRACE/],[init(authority,10,1_051_201),/INVALID_GRACE/],
     [{inputs:[0,...ids(authority),10]},/initialize expects 4 inputs/],
-    [init(authority,10,5),'ok'],[init(authority,10,5),/ALREADY_INITIALIZED/],...look(),
+    [init(authority,10,5,[]),/AUTH_ASSET_REQUIRED/],[init(authority,10,5,inc([B,4])),/AUTH_ASSET_REQUIRED/],
+    [init({block:2n,tx:MAX},10,5,inc([{block:2n,tx:MAX},1])),null],[init({block:4n,tx:777n},10,5,inc([{block:4n,tx:777n},1])),null],
+    [{before:authMode(1),...init(authority,10,5)},/AUTH_REJECTED/],[{before:authMode(2),...init(authority,10,5)},/AUTH_FAILURE/],
+    [{before:authMode(0),...init(authority,10,5,auth(...inc([B,4])))},'ok'],[init(authority,10,5),/ALREADY_INITIALIZED/],...look(),
     [deposit(A,inc([A,1000])),'ok'],[deposit(B,inc([B,50],[A,7])),'ok'],
     [deposit(treasury,inc([A,1])),/SELF_ASSET/],[deposit(authority,inc([authority,1])),/AUTHORITY_ASSET/],
     [deposit(A,[]),/NOTHING_DEPOSITED/],[deposit(A,inc([B,9])),/NOTHING_DEPOSITED/],

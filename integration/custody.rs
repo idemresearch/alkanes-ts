@@ -259,27 +259,32 @@ fn share_vault_vests_harvested_yield_with_real_auth() {
 #[wasm_bindgen_test]
 fn timelock_treasury_pays_out_inside_its_window_with_real_auth() {
     helpers::clear();
-    let (asset, treasury) = (alkane(1), alkane(2));
+    let (treasury, asset) = (alkane(1), alkane(2));
     let auth = real_auth(880200);
-    let (funded, e) = create(CUSTODY_TOKEN, vec![0, 1_000_000], Some(outpoint(&auth, 0)), 880201);
-    assert!(e.result.is_ok(), "asset: {e:?}");
-    // Withdrawals are ready 2 blocks after scheduling and expire 3 blocks later.
-    let (_, e) = create(TREASURY, vec![0, 4, 9001, 2, 3], None, 880202);
+    // The initializer proves the authority: the deployment presents the auth
+    // unit, which comes back with the response. Withdrawals are ready 2
+    // blocks after scheduling and expire 3 blocks later.
+    let (deployed, e) = create(TREASURY, vec![0, 4, 9001, 2, 3], Some(outpoint(&auth, 0)), 880201);
     assert!(e.result.is_ok(), "treasury: {e:?}");
-    report("timelock-treasury deploy+initialize", &e);
+    report("timelock-treasury deploy+initialize (real auth)", &e);
     helpers::assert_binary_deployed_to_id(treasury.clone(), TREASURY.to_vec()).unwrap();
+    let units = balance(&deployed, authority());
+    assert!(units >= 1, "the auth unit comes back");
+    // Token forwards incoming assets, so this output holds the asset and the auth units.
+    let (funded, e) = create(CUSTODY_TOKEN, vec![0, 1_000_000], Some(outpoint(&deployed, 0)), 880202);
+    assert!(e.result.is_ok(), "asset: {e:?}");
     let view = |inputs: Vec<u128>, height: u32| ok(&call(&treasury, inputs, None, height).1);
 
-    // A deposit keeps the asset and returns the auth unit.
-    let (deposited, e) = call(&treasury, vec![1, 2, 1], Some(outpoint(&funded, 0)), 880203);
+    // A deposit keeps the asset and returns the auth units.
+    let (deposited, e) = call(&treasury, vec![1, 2, 2], Some(outpoint(&funded, 0)), 880203);
     assert_eq!(ok(&e), 1_000_000);
     report("timelock-treasury deposit", &e);
     assert_eq!(balance(&deposited, asset.clone()), 0);
-    assert_eq!(balance(&deposited, authority()), 1);
+    assert_eq!(balance(&deposited, authority()), units);
     assert_eq!(custody(&treasury, &asset), 1_000_000);
 
     // Scheduled at 880204: ready from 880206, expired from 880209.
-    let (scheduled, e) = call(&treasury, vec![2, 2, 1, 400_000], Some(outpoint(&deposited, 0)), 880204);
+    let (scheduled, e) = call(&treasury, vec![2, 2, 2, 400_000], Some(outpoint(&deposited, 0)), 880204);
     assert_eq!(ok(&e), 880206);
     report("timelock-treasury schedule (real auth)", &e);
     let units = balance(&scheduled, authority());
@@ -296,18 +301,23 @@ fn timelock_treasury_pays_out_inside_its_window_with_real_auth() {
 
     // A withdrawal left past its window can no longer execute; its slot can
     // be replaced, and the replacement cancelled.
-    let (again, e) = call(&treasury, vec![2, 2, 1, 100_000], Some(outpoint(&paid, 0)), 880208);
+    let (again, e) = call(&treasury, vec![2, 2, 2, 100_000], Some(outpoint(&paid, 0)), 880208);
     assert_eq!(ok(&e), 880210);
     let (late, e) = call(&treasury, vec![3], Some(outpoint(&again, 0)), 880213);
     assert_revert(e, "WITHDRAWAL_EXPIRED");
     assert_eq!(custody(&treasury, &asset), 600_000);
-    let (replaced, e) = call(&treasury, vec![2, 2, 1, 50_000], Some(outpoint(&late, 0)), 880214);
+    let (replaced, e) = call(&treasury, vec![2, 2, 2, 50_000], Some(outpoint(&late, 0)), 880214);
     assert_eq!(ok(&e), 880216);
     assert_eq!(view(vec![12], 880215), 880216);
     let (_, e) = call(&treasury, vec![4], Some(outpoint(&replaced, 0)), 880216);
     assert!(e.result.is_ok(), "cancel: {e:?}");
     report("timelock-treasury cancel (real auth)", &e);
     assert_eq!(view(vec![11], 880217), 0);
-    assert_eq!(view(vec![13, 2, 1], 880218), 600_000);
+    assert_eq!(view(vec![13, 2, 2], 880218), 600_000);
     assert_eq!(custody(&treasury, &asset), 600_000);
+
+    // An authority that nobody can present a unit of is refused, and the
+    // failed initializer rolls the creation back.
+    let (_, e) = create(TREASURY, vec![0, 4, 7777, 2, 3], None, 880219);
+    assert_revert(e, "AUTH_ASSET_REQUIRED");
 }

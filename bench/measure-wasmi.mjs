@@ -28,7 +28,7 @@ const AMM = ["0,2,11,2,12", "1,0@2:11=1000000+2:12=4000000"];
 const authWasm = join(root, "build/measure-wasmi/test-auth.wasm");
 const AUTH = ["--deploy", `4:9001=${authWasm}`, "--target", "4:9001", "0,0", "--target", "2:1"];
 const VAULT = [...AUTH, "0,2,5,4,9001,100", "1,0@2:5=1000000"];
-const TREASURY = [...AUTH, "0,4,9001,0,100", "1,2,5@2:5=1000"];
+const TREASURY = [...AUTH, "0,4,9001,0,100@4:9001=1", "1,2,5@2:5=1000"];
 const POOLS = ["--deploy", `2:10=${join(root, "dist/amm-pool.wasm")}`, "--deploy", `2:20=${join(root, "dist/amm-pool.wasm")}`,
   "--target", "2:10", "0,2,11,2,12", "1,0@2:11=1000000+2:12=4000000",
   "--target", "2:20", "0,2,13,2,12", "1,0@2:13=3000000+2:12=2000000", "--target", "2:1"];

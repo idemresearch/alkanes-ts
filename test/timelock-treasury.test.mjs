@@ -27,14 +27,18 @@ const DELAY=10n,GRACE=100n,LIMIT=1_051_200n,MAX=(1n<<128n)-1n,MAX_HEIGHT=(1n<<64
 const auth=[{id:authority,value:1n}];
 
 // mode: 0 approves, 1 answers [0], 2 reverts (test/fixtures/test-auth.ts).
+// The treasury's initializer proves the authority with one auth call, so the
+// authority approves that call and switches to `mode` afterwards.
+const setMode=(vm,id,mode)=>vm.storageOf(id).set(Buffer.from('/mode').toString('hex'),u128.encode(BigInt(mode)));
 function setup({mode=0,delay=DELAY,grace=GRACE,height=1000n}={}){
   const vm=new AlkanesVM({height});
   vm.deploy(treasury,readFileSync('dist/timelock-treasury.wasm'));
   vm.deploy(authority,authWasm);
   vm.deploy(impostor,authWasm);
-  vm.call({target:authority,inputs:[0,mode]});
+  vm.call({target:authority,inputs:[0,0]});
   vm.call({target:impostor,inputs:[0,0]});
-  vm.call({target:treasury,inputs:[0,authority.block,authority.tx,delay,grace]});
+  vm.call({target:treasury,inputs:[0,authority.block,authority.tx,delay,grace],incoming:auth});
+  if(mode!==0)setMode(vm,authority,mode);
   return vm;
 }
 const fresh=()=>{
@@ -69,12 +73,19 @@ const observe=vm=>({pending:pending(vm),calls:authCalls(vm),
 test('TimelockTreasury initializes once with an external authority and gates everything before that',()=>{
   const vm=new AlkanesVM();
   vm.deploy(treasury,readFileSync('dist/timelock-treasury.wasm'));
+  vm.deploy(authority,authWasm);
+  vm.call({target:authority,inputs:[0,0]});
   for(const inputs of [[1,t0.block,t0.tx],[2,t0.block,t0.tx,1],[3],[4],[10],[11],[12],[13,t0.block,t0.tx],[14],[15],[16]])
     assert.throws(()=>call(vm,inputs),/NOT_INITIALIZED/);
-  assert.throws(()=>call(vm,[0,treasury.block,treasury.tx,5,7]),/SELF_AUTHORITY/);
-  assert.throws(()=>call(vm,[0,authority.block,authority.tx,5,7],auth),/rejects incoming assets/);
-  call(vm,[0,authority.block,authority.tx,5,7]);
-  assert.throws(()=>call(vm,[0,authority.block,authority.tx,5,7]),/ALREADY_INITIALIZED/);
+  assert.throws(()=>call(vm,[0,treasury.block,treasury.tx,5,7],auth),/SELF_AUTHORITY/);
+  // The deployer proves the authority by presenting a unit, which comes back
+  // along with anything else sent to the initializer.
+  assert.throws(()=>call(vm,[0,authority.block,authority.tx,5,7]),/AUTH_ASSET_REQUIRED/);
+  assert.throws(()=>call(vm,[0,authority.block,authority.tx,5,7],[{id:t0,value:3n}]),/AUTH_ASSET_REQUIRED/);
+  const init=call(vm,[0,authority.block,authority.tx,5,7],[...auth,{id:t0,value:3n}]);
+  assert.deepEqual(init.alkanes,[...auth,{id:t0,value:3n}]);
+  assert.equal(authCalls(vm),1n);
+  assert.throws(()=>call(vm,[0,authority.block,authority.tx,5,7],auth),/ALREADY_INITIALIZED/);
   assert.deepEqual(call(vm,[15]).data,u128.list([authority.block,authority.tx]));
   assert.equal(value(call(vm,[14])),5n);
   assert.equal(value(call(vm,[16])),7n);
@@ -98,8 +109,9 @@ test('TimelockTreasury deposits retain only the named asset and refund the rest 
   assert.equal(value(r1),MAX);assert.deepEqual(r1.alkanes,[]);
   assert.equal(value(deposit(vm,t0,[{id:t0,value:25n}])),25n);
   assertCustody(vm,[[t0,175n],[t1,MAX],[other,0n]]);
-  // Deposits need no auth and never touch the authority.
-  assert.equal(authCalls(vm),0n);
+  // Deposits need no auth and never touch the authority: the one call so far
+  // is the initializer's.
+  assert.equal(authCalls(vm),1n);
   // Nothing named, nothing kept: the call reverts and nothing moves.
   const before=observe(vm);
   assert.throws(()=>deposit(vm,t0,[{id:other,value:5n}]),/NOTHING_DEPOSITED/);
@@ -120,7 +132,7 @@ test('TimelockTreasury schedules, waits out the delay, executes once and pays th
   assert.equal(value(s),1000n+DELAY);
   assert.deepEqual(s.alkanes,[{id:authority,value:1n},{id:other,value:3n}]);
   assert.deepEqual(pending(vm),scheduled(t0,60n,1010n));
-  assert.equal(authCalls(vm),1n);
+  assert.equal(authCalls(vm),2n);
   // One pending withdrawal at a time.
   assert.throws(()=>schedule(vm,t1,1n),/WITHDRAWAL_PENDING/);
   // Early execution reverts at every height before readyAt.
@@ -147,7 +159,7 @@ test('TimelockTreasury schedules, waits out the delay, executes once and pays th
   assertCustody(vm,[[t0,90n],[t1,0n]]);
   // auth fixture balances are unchanged: the auth unit always comes back.
   assert.equal(vm.balanceOf(authority,authority),0n);
-  assert.equal(authCalls(vm),4n);
+  assert.equal(authCalls(vm),5n);
 });
 
 test('TimelockTreasury cancel clears the slot without moving assets and restarts the delay',()=>{
@@ -256,20 +268,45 @@ test('TimelockTreasury refuses assets on views and rejects unknown opcodes',()=>
   assert.throws(()=>call(vm,[99]),/Unrecognized opcode/);
 });
 
-test('TimelockTreasury initialize accepts only authorities at blocks 2 and 4, where deployed alkanes live',()=>{
-  // Any other ID can never answer the auth call, so deposits into such a
-  // treasury could never be withdrawn. 0:0 is the top-level caller ID.
+test('TimelockTreasury initialize accepts only an authority the deployer proves by authenticating',()=>{
+  // Any ID outside blocks 2 and 4 can never answer the auth call, so it is
+  // refused before any call. 0:0 is the top-level caller ID.
   for(const id of [{block:0n,tx:0n},{block:1n,tx:0n},{block:3n,tx:9001n},{block:5n,tx:1n},{block:6n,tx:1n},{block:32n,tx:0n},{block:800000000n,tx:1n},{block:MAX,tx:MAX}]){
     const vm=fresh();
-    assert.throws(()=>call(vm,[0,id.block,id.tx,DELAY,GRACE]),/INVALID_AUTHORITY/,`authority ${id.block}:${id.tx}`);
+    assert.throws(()=>call(vm,[0,id.block,id.tx,DELAY,GRACE],[{id,value:1n}]),/INVALID_AUTHORITY/,`authority ${id.block}:${id.tx}`);
     // The failed initializer leaves the treasury unusable for deposits.
     assert.throws(()=>deposit(vm,t0,[{id:t0,value:7n}]),/NOT_INITIALIZED/);
   }
-  for(const id of [{block:2n,tx:0n},{block:2n,tx:MAX},{block:4n,tx:0n},authority]){
+  // A block-2/4 ID only counts once it authenticates. [2, MAX] is never
+  // reached by CREATE, and an ID nobody has deployed yet would belong to
+  // whoever deploys it first; neither can answer the initializer's auth call.
+  for(const id of [{block:2n,tx:0n},{block:2n,tx:MAX},{block:4n,tx:0n},{block:4n,tx:777n}]){
     const vm=fresh();
-    call(vm,[0,id.block,id.tx,DELAY,GRACE]);
-    assert.deepEqual(call(vm,[15]).data,u128.list([id.block,id.tx]));
+    assert.throws(()=>call(vm,[0,id.block,id.tx,DELAY,GRACE]),/AUTH_ASSET_REQUIRED/,`authority ${id.block}:${id.tx}`);
+    assert.throws(()=>call(vm,[0,id.block,id.tx,DELAY,GRACE],[{id,value:1n}]),`authority ${id.block}:${id.tx} with a unit`);
+    assert.throws(()=>deposit(vm,t0,[{id:t0,value:7n}]),/NOT_INITIALIZED/);
   }
+  // An authority that refuses the initializer's call is refused too.
+  for(const [mode,error] of [[1,/AUTH_REJECTED/],[2,/AUTH_FAILURE/]]){
+    const vm=fresh();
+    vm.deploy(authority,authWasm);vm.call({target:authority,inputs:[0,mode]});
+    assert.throws(()=>call(vm,[0,authority.block,authority.tx,DELAY,GRACE],auth),error);
+  }
+});
+
+test('TimelockTreasury: an authority ID nobody has deployed yet is refused, so it cannot be claimed later',()=>{
+  // Before initialization required authentication, a treasury could be bound
+  // to an authority nobody had deployed yet. Whoever deployed that ID first
+  // could then schedule and execute withdrawals of the users' deposits. The
+  // initializer's auth call now fails for such an ID; on chain, the failed
+  // initializer rolls the treasury's creation back.
+  const reserved={block:4n,tx:777n},vm=fresh();
+  assert.throws(()=>call(vm,[0,reserved.block,reserved.tx,DELAY,GRACE],[{id:reserved,value:1n}]));
+  vm.deploy(reserved,authWasm);vm.call({target:reserved,inputs:[0,0]});
+  const squatter=[{id:reserved,value:1n}];
+  assert.throws(()=>deposit(vm,t0,[{id:t0,value:500n}]),/NOT_INITIALIZED/);
+  assert.throws(()=>schedule(vm,t0,500n,squatter),/NOT_INITIALIZED/);
+  assert.throws(()=>execute(vm,squatter),/NOT_INITIALIZED/);
 });
 
 test('TimelockTreasury initialize bounds delay and grace to 1_051_200 blocks so every window is reachable',()=>{
@@ -407,7 +444,8 @@ test('generated TimelockTreasury client attaches auth/deposit assets and simulat
   assert.equal(await client.read.getPendingAmount(),0n);
   assert.deepEqual(await client.read.getPendingAsset(),{block:0n,tx:0n});
   const deployment=TimelockTreasuryClient.deploy(transport,new Uint8Array([0]),{authority,delay:DELAY,grace:GRACE});
-  assert.throws(()=>deployment.withAssets(auth),/rejects incoming assets/);
+  // The initializer authenticates, so the deployment carries an auth unit.
+  assert.deepEqual(deployment.withAssets(auth).prepare().incoming,auth);
   assert.deepEqual(deployment.prepare().target,{block:1n,tx:0n});
   assert.deepEqual(deployment.prepare().inputs,[0n,authority.block,authority.tx,DELAY,GRACE]);
 });
@@ -424,12 +462,18 @@ buildLibrary({entry:join(reenterWork,'entry.ts'),work:reenterWork,out:join(reent
 const reenterWasm=readFileSync(join(reenterWork,'auth.wasm'));
 // The fixture's initializer takes the re-entry cellpack [op, a, b, c] (a/b and
 // c omitted when zero) and whether to forward the auth unit with it.
+// The initializer authenticates while the treasury is still initializing, when
+// any re-entry fails and this fixture would refuse. So the authority approves
+// the initializer's call with the plain fixture and is then replaced by the
+// re-entering one.
 function setupReenter([op,a,b,fwd,c=0]){
   const vm=new AlkanesVM({height:1000n});
   vm.deploy(treasury,readFileSync('dist/timelock-treasury.wasm'));
+  vm.deploy(authority,authWasm);
+  vm.call({target:authority,inputs:[0,0]});
+  vm.call({target:treasury,inputs:[0,authority.block,authority.tx,0,GRACE],incoming:auth});
   vm.deploy(authority,reenterWasm);
   vm.call({target:authority,inputs:[0,op,a,b,fwd,c]});
-  vm.call({target:treasury,inputs:[0,authority.block,authority.tx,0,GRACE]});
   return vm;
 }
 
@@ -464,7 +508,7 @@ test('TimelockTreasury custody does not drift when the authority keeps or inflat
     vm.deploy(treasury,readFileSync('dist/timelock-treasury.wasm'));
     vm.deploy(authority,oddWasm);
     vm.call({target:authority,inputs:[0,mode]});
-    vm.call({target:treasury,inputs:[0,authority.block,authority.tx,0,GRACE]});
+    vm.call({target:treasury,inputs:[0,authority.block,authority.tx,0,GRACE],incoming:auth});
     deposit(vm,t0,[{id:t0,value:100n}]);
     // Two units presented each time, one of them sent to the authority:
     // the caller gets 2-1 back (mode 0) or 2-1+3 (mode 1).

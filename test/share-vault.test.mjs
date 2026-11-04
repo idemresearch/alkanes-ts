@@ -34,7 +34,10 @@ const D=100n,MIN_SHARES=1_000_000n;
 const toShares=(x,t)=>x*(t.shares+V)/(t.assets+1n);
 const toAssets=(s,t)=>s*(t.assets+1n)/(t.shares+V);
 // Reference lock: ceil(L * r / d) with r = max(0, H + d - h), never above L.
+// Redemptions (and lockedProfit) use it; deposits use the floor, so the
+// rounding favors the vault both ways.
 const lockedAt=(L,H,d,h)=>{const r=H+d>h?H+d-h:0n;const c=r<d?r:d;return (L*c+d-1n)/d;};
+const lockedFloorAt=(L,H,d,h)=>{const r=H+d>h?H+d-h:0n;const c=r<d?r:d;return L*c/d;};
 
 function setup({mode=0,init=true,vesting=D}={}){
   const vm=new AlkanesVM();
@@ -47,8 +50,11 @@ function setup({mode=0,init=true,vesting=D}={}){
 const view=(vm,opcode,...args)=>u128.decode(vm.call({target:vault,inputs:[opcode,...args]}).data);
 // Stored totals: totalAssets includes yield that is still vesting.
 const totals=vm=>({assets:view(vm,10),shares:view(vm,11)});
-// What conversions price against: totalAssets minus lockedProfit.
+// What redemptions price against: totalAssets minus lockedProfit.
 const pricing=vm=>({assets:view(vm,10)-view(vm,17),shares:view(vm,11)});
+// What deposits price against: totalAssets minus the lock rounded down, for a
+// lock of L harvested at height H.
+const depositPricing=(vm,L,H,d=D)=>({assets:view(vm,10)-lockedFloorAt(L,H,d,vm.height),shares:view(vm,11)});
 const elapse=(vm,blocks)=>{vm.height+=blocks;};
 const deposit=(vm,x,min=0n,extra=[])=>vm.call({target:vault,inputs:[1,min],incoming:[{id:asset,value:x},...extra]});
 const redeem=(vm,s,min=0n,extra=[])=>vm.call({target:vault,inputs:[2,min],incoming:[{id:vault,value:s},...extra]});
@@ -430,7 +436,7 @@ test('ShareVault never lets redeemable value exceed custody across a random oper
     const t=pricing(vm),action=next(12n),who=Number(next(3n));
     if(action<4n){
       const x=1n+next([10n,1000n,10n**9n,10n**24n][Number(next(4n))]);
-      const s=toShares(x,t);
+      const s=toShares(x,depositPricing(vm,lockL,lockH));
       if(s===0n){assert.throws(()=>deposit(vm,x),/ZERO_SHARES/);continue;}
       assert.equal(view(vm,12,x),s);
       assert.equal(out(deposit(vm,x,s)),s);
@@ -582,7 +588,7 @@ test('ShareVault vests harvested yield so a just-in-time deposit earns nothing a
   assert.ok(half.earned<=Y*99n/100n/2n&&half.earned>=Y*99n/100n/2n-2n,`attacker earned ${half.earned} in D/2 blocks`);
 });
 
-test('ShareVault unlocks harvested yield linearly, rounding the lock up, and prices every conversion against it',()=>{
+test('ShareVault unlocks harvested yield linearly, pricing redemptions against the lock rounded up and deposits against it rounded down',()=>{
   const d=7n,Y=1000n;                           // 1000/7 is not whole, so rounding shows
   const vm=setup({vesting:d});
   deposit(vm,1_000_000n);
@@ -597,7 +603,8 @@ test('ShareVault unlocks harvested yield linearly, rounding the lock up, and pri
     assert.equal(locked,lockedAt(Y,H,d,vm.height));
     const t=pricing(vm);
     assert.deepEqual(t,{assets:1_001_000n-locked,shares:1_000_000_000n});
-    for(const x of [1n,999n,123_456n])assert.equal(view(vm,12,x),toShares(x,t),`deposit ${x} at +${k}`);
+    const forDeposits={assets:1_001_000n-lockedFloorAt(Y,H,d,vm.height),shares:1_000_000_000n};
+    for(const x of [1n,999n,123_456n])assert.equal(view(vm,12,x),toShares(x,forDeposits),`deposit ${x} at +${k}`);
     for(const s of [999n,1_000_000n,1_000_000_000n])assert.equal(view(vm,13,s),toAssets(s,t),`redeem ${s} at +${k}`);
     assertBacked(vm);
   }
@@ -610,13 +617,15 @@ test('ShareVault unlocks harvested yield linearly, rounding the lock up, and pri
   // and leave the lock alone.
   const mid=setup({vesting:d});
   deposit(mid,1_000_000n);
+  const midH=mid.height;
   harvest(mid,[{id:asset,value:Y}]);
   elapse(mid,3n);
-  let t=pricing(mid);
+  // floor(1000 * 4 / 7) = 571 for the deposit, 572 for everything else.
   const s=out(deposit(mid,5_000n));
-  assert.equal(s,toShares(5_000n,t));
+  assert.equal(lockedFloorAt(Y,midH,d,mid.height),571n);
+  assert.equal(s,toShares(5_000n,{assets:1_001_000n-571n,shares:1_000_000_000n}));
   assert.equal(view(mid,17),572n);
-  t=pricing(mid);
+  let t=pricing(mid);
   assert.equal(out(redeem(mid,s)),toAssets(s,t));
   assert.equal(view(mid,17),572n);
   assertBacked(mid);
@@ -706,6 +715,7 @@ test('ShareVault deposits and redemptions through a contract caller keep shares,
   assert.equal(out(r1),1_000_000_000n);
   assert.equal(paid(r1,vault),1_000_000_000n);assert.equal(paid(r1,other),3n);
   assert.equal(vm.balanceOf(relay,vault),0n);assert.equal(vm.balanceOf(relay,asset),0n);
+  const H=vm.height;
   harvest(vm,[{id:asset,value:12_345n}]);elapse(vm,D/3n);
   // Nested redemption retains the shares as reissuable vault balance.
   let t=pricing(vm);
@@ -714,7 +724,7 @@ test('ShareVault deposits and redemptions through a contract caller keep shares,
   assert.equal(vm.balanceOf(vault,vault),600_000_000n);
   // A nested deposit larger than the retained balance reissues all of it and
   // mints only the difference.
-  t=pricing(vm);
+  t=depositPricing(vm,12_345n,H);
   const s=out(via(1n,0n,[{id:asset,value:900_000n}]));
   assert.equal(s,toShares(900_000n,t));
   assert.ok(s>600_000_000n);
@@ -723,4 +733,22 @@ test('ShareVault deposits and redemptions through a contract caller keep shares,
   assert.equal(t.shares,400_000_000n+s);
   assert.equal(custody(vm),t.assets);
   assert.equal(vm.balanceOf(relay,vault),0n);assert.equal(vm.balanceOf(relay,asset),0n);
+});
+
+test('ShareVault deposits never issue more shares than the exact lock prices',()=>{
+  // D = 7, one block after a harvest of 1000: the exact lock is 6000/7 =
+  // 857.14. Rounding it up for deposits (E rounded down) would issue 857
+  // shares too many for a 1,000,000 deposit; deposits round the lock down.
+  const D=7n,vm=setup({vesting:D});
+  deposit(vm,1_000_000n);
+  const H=vm.height;
+  harvest(vm,[{id:asset,value:1000n}]);
+  vm.height=H+1n;
+  assert.equal(view(vm,17),858n);
+  const A=view(vm,10),S=view(vm,11),L=1000n,r=D-1n,x=1_000_000n;
+  const exact=x*(S+V)*D/(A*D-L*r+D);                // floor(x(S+V)/(A - L*r/D + 1))
+  const issued=view(vm,12,x);
+  assert.ok(issued<=exact,`deposit issues ${issued} shares, ${issued-exact} more than the exact lock prices (${exact})`);
+  assert.equal(out(deposit(vm,x)),issued);
+  assertBacked(vm);
 });

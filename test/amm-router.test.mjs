@@ -320,3 +320,9 @@ test('AmmRouter rejects a route after its deadline height before calling any poo
   assert.equal(u128.decode(swap2(vm,10_000n,{min:out,deadline}).data),out);
   assertNoCustody(vm);
 });
+
+test('AmmRouter never reads fuel: each hop passes a constant limit and the module imports no __fuel',()=>{
+  const imports=WebAssembly.Module.imports(new WebAssembly.Module(readFileSync('dist/amm-router.wasm'))).map(i=>`${i.module}.${i.name}`);
+  assert.ok(imports.includes('env.__call'),imports.join(', '));
+  assert.ok(!imports.includes('env.__fuel'),imports.join(', '));
+});
