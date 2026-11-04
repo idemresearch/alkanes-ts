@@ -4,8 +4,13 @@
 //   node scripts/bench-art.mjs
 //
 // Reads bench/CANONICAL_V3_EXAMPLES.md and bench/CANONICAL_V3_CAPPED_TOKEN.md
-// and writes docs/assets/fuel-{light,dark}.svg. Numbers are never typed in by
-// hand: rerun this after refreshing either report.
+// and writes docs/assets/fuel.svg. Numbers are never typed in by hand: rerun
+// this after refreshing either report.
+//
+// One file serves both themes: the colors are CSS classes with a
+// prefers-color-scheme override, and the chart draws its own card background,
+// so it stays legible wherever it is embedded. Plain markdown image syntax
+// works in private repositories, where <picture> sources do not resolve.
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -68,7 +73,6 @@ const themes = {
   light: {
     surface: "#fcfcfb",
     border: "#e4e3df",
-    track: "#efeeea",
     primary: "#0b0b0b",
     secondary: "#52514e",
     muted: "#8a8984",
@@ -78,7 +82,6 @@ const themes = {
   dark: {
     surface: "#1a1a19",
     border: "#2e2e2c",
-    track: "#262624",
     primary: "#f0efec",
     secondary: "#c3c2b7",
     muted: "#8f8e86",
@@ -86,6 +89,12 @@ const themes = {
     rust: "#d95926",
   },
 };
+
+const rules = (c) =>
+  `.card{fill:${c.surface};stroke:${c.border}}.rule{stroke:${c.border}}` +
+  `.primary{fill:${c.primary}}.secondary{fill:${c.secondary}}.muted{fill:${c.muted}}` +
+  `.ts{fill:${c.ts}}.rust{fill:${c.rust}}`;
+const css = `${rules(themes.light)}@media (prefers-color-scheme: dark){${rules(themes.dark)}}`;
 
 const W = 880;
 const PAD = 40;
@@ -108,30 +117,30 @@ const SANS = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, s
 
 // A horizontal bar whose data end (right) has 4px rounded corners and whose
 // baseline end (left) stays square.
-function bar(x, y, w, h, fill) {
+function bar(x, y, w, h, cls) {
   const r = Math.min(4, w / 2, h / 2);
-  return `<path d="M${x},${y} h${(w - r).toFixed(2)} a${r},${r} 0 0 1 ${r},${r} v${h - 2 * r} a${r},${r} 0 0 1 -${r},${r} h-${(w - r).toFixed(2)} z" fill="${fill}"/>`;
+  return `<path d="M${x},${y} h${(w - r).toFixed(2)} a${r},${r} 0 0 1 ${r},${r} v${h - 2 * r} a${r},${r} 0 0 1 -${r},${r} h-${(w - r).toFixed(2)} z" class="${cls}"/>`;
 }
 
-function render(theme) {
-  const c = themes[theme];
+function render() {
   const out = [];
   out.push(
     `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-labelledby="title desc">`,
     `<title id="title">Fuel per call: alkanes-ts against optimized Rust</title>`,
+    `<style>${css}</style>`,
     `<desc id="desc">${data.map((d) => `${d.contract} ${d.call}: TypeScript ${n(d.ts)} fuel, Rust ${n(d.rust)} fuel, ${ratio(d)} times less`).join("; ")}.</desc>`,
-    `<rect x="0.5" y="0.5" width="${W - 1}" height="${H - 1}" rx="12" fill="${c.surface}" stroke="${c.border}"/>`,
-    `<text x="${PAD}" y="52" font-family="${SANS}" font-size="22" font-weight="600" fill="${c.primary}">Fuel per call on the canonical Alkanes indexer</text>`,
-    `<text x="${PAD}" y="78" font-family="${SANS}" font-size="14" fill="${c.secondary}">alkanes-rs v3.0.0-rc.4 · wasmi 0.37.2 · host and storage charges included · lower is better</text>`,
+    `<rect x="0.5" y="0.5" width="${W - 1}" height="${H - 1}" rx="12" class="card"/>`,
+    `<text x="${PAD}" y="52" font-family="${SANS}" font-size="22" font-weight="600" class="primary">Fuel per call on the canonical Alkanes indexer</text>`,
+    `<text x="${PAD}" y="78" font-family="${SANS}" font-size="14" class="secondary">alkanes-rs v3.0.0-rc.4 · wasmi 0.37.2 · host and storage charges included · lower is better</text>`,
   );
   // Legend.
   const ly = 108;
   out.push(
-    bar(PAD, ly - 9, 14, 10, c.ts),
-    `<text x="${PAD + 22}" y="${ly}" font-family="${SANS}" font-size="13" fill="${c.secondary}">TypeScript (scriptc 0.4.7)</text>`,
-    bar(PAD + 210, ly - 9, 14, 10, c.rust),
-    `<text x="${PAD + 232}" y="${ly}" font-family="${SANS}" font-size="13" fill="${c.secondary}">Rust O3, fat LTO, wasm-opt O3</text>`,
-    `<text x="${W - PAD}" y="${ly}" text-anchor="end" font-family="${SANS}" font-size="13" fill="${c.muted}">less fuel</text>`,
+    bar(PAD, ly - 9, 14, 10, "ts"),
+    `<text x="${PAD + 22}" y="${ly}" font-family="${SANS}" font-size="13" class="secondary">TypeScript (scriptc 0.4.7)</text>`,
+    bar(PAD + 210, ly - 9, 14, 10, "rust"),
+    `<text x="${PAD + 232}" y="${ly}" font-family="${SANS}" font-size="13" class="secondary">Rust O3, fat LTO, wasm-opt O3</text>`,
+    `<text x="${W - PAD}" y="${ly}" text-anchor="end" font-family="${SANS}" font-size="13" class="muted">less fuel</text>`,
   );
 
   data.forEach((d, i) => {
@@ -140,20 +149,20 @@ function render(theme) {
     const tsW = (d.ts / d.rust) * BAR_W;
     const mid = y + BAR_H + GAP / 2;
     out.push(
-      `<text x="${PAD}" y="${mid - 3}" font-family="${SANS}" font-size="14" font-weight="600" fill="${c.primary}">${esc(d.contract)}</text>`,
-      `<text x="${PAD}" y="${mid + 15}" font-family="${SANS}" font-size="13" fill="${c.secondary}">${esc(d.call)}</text>`,
-      bar(BAR_X, y, tsW, BAR_H, c.ts),
-      `<text x="${BAR_X + tsW + 8}" y="${y + BAR_H - 1}" font-family="${MONO}" font-size="12" fill="${c.secondary}">${n(d.ts)}</text>`,
-      bar(BAR_X, y + BAR_H + GAP, rustW, BAR_H, c.rust),
-      `<text x="${BAR_X + rustW + 8}" y="${y + 2 * BAR_H + GAP - 1}" font-family="${MONO}" font-size="12" fill="${c.secondary}">${n(d.rust)}</text>`,
-      `<text x="${W - PAD}" y="${mid + 8}" text-anchor="end" font-family="${MONO}" font-size="22" font-weight="700" fill="${c.primary}">${ratio(d)}×</text>`,
+      `<text x="${PAD}" y="${mid - 3}" font-family="${SANS}" font-size="14" font-weight="600" class="primary">${esc(d.contract)}</text>`,
+      `<text x="${PAD}" y="${mid + 15}" font-family="${SANS}" font-size="13" class="secondary">${esc(d.call)}</text>`,
+      bar(BAR_X, y, tsW, BAR_H, "ts"),
+      `<text x="${BAR_X + tsW + 8}" y="${y + BAR_H - 1}" font-family="${MONO}" font-size="12" class="secondary">${n(d.ts)}</text>`,
+      bar(BAR_X, y + BAR_H + GAP, rustW, BAR_H, "rust"),
+      `<text x="${BAR_X + rustW + 8}" y="${y + 2 * BAR_H + GAP - 1}" font-family="${MONO}" font-size="12" class="secondary">${n(d.rust)}</text>`,
+      `<text x="${W - PAD}" y="${mid + 8}" text-anchor="end" font-family="${MONO}" font-size="22" font-weight="700" class="primary">${ratio(d)}×</text>`,
     );
   });
 
   const fy = TOP + data.length * ROW_H + 18;
   out.push(
-    `<line x1="${PAD}" y1="${fy - 12}" x2="${W - PAD}" y2="${fy - 12}" stroke="${c.border}"/>`,
-    `<text x="${PAD}" y="${fy + 12}" font-family="${SANS}" font-size="12" fill="${c.muted}">Bars are scaled to each call's Rust fuel. Same indexer, auth binary, and response checks for both. Data: bench/CANONICAL_V3_*.md</text>`,
+    `<line x1="${PAD}" y1="${fy - 12}" x2="${W - PAD}" y2="${fy - 12}" class="rule"/>`,
+    `<text x="${PAD}" y="${fy + 12}" font-family="${SANS}" font-size="12" class="muted">Bars are scaled to each call's Rust fuel. Same indexer, auth binary, and response checks for both. Data: bench/CANONICAL_V3_*.md</text>`,
     `</svg>`,
   );
   return out.join("\n") + "\n";
@@ -161,11 +170,9 @@ function render(theme) {
 
 const outDir = join(root, "docs", "assets");
 mkdirSync(outDir, { recursive: true });
-for (const theme of Object.keys(themes)) {
-  const path = join(outDir, `fuel-${theme}.svg`);
-  writeFileSync(path, render(theme));
-  console.log(`wrote ${path.slice(root.length + 1)}`);
-}
+const path = join(outDir, "fuel.svg");
+writeFileSync(path, render());
+console.log(`wrote ${path.slice(root.length + 1)}`);
 for (const d of data) {
   console.log(`${d.contract} ${d.call}: ${n(d.ts)} vs ${n(d.rust)} (${ratio(d)}x)`);
 }
