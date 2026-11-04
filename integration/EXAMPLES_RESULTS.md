@@ -15,7 +15,7 @@ test native_words_preserve_wide_values_checked_operations_and_self_auth ... ok
 test initialization_reentry_is_blocked ... ok
 test initialization_and_numeric_boundaries ... ok
 test authentication_failures_and_reentry ... ok
-test result: ok. 11 passed; 0 failed; 0 ignored; 0 filtered out; finished in 79.32s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 filtered out; finished in 81.20s
 ```
 
 Covered: generated-client CREATE+init bytes; typed ID state; initialization gates and atomic deployment failure; actual upstream auth verification and returned assets; cap/max-u128 boundaries; failed-auth and post-auth rollback; auth and initializer reentry; callback cache invalidation; outgoing Bitcoin UTXO balances; complete TS/Rust response and storage parity. Additional Counter/Token coverage: checked wide increments/mints, numeric loops, storage fill, height, metadata responses, caller ownership, real UTXO balances and nested-call rollback.
