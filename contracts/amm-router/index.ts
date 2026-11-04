@@ -1,4 +1,4 @@
-import { Contract, method, assert, type AlkaneId, type u128 } from "../../sdk/authoring.ts";
+import { Contract, method, view, assert, type AlkaneId, type u128 } from "../../sdk/authoring.ts";
 import { AlkaneTransferParcel, Cellpack } from "../../sdk/types.ts";
 import { height } from "../../sdk/runtime.ts";
 
@@ -98,4 +98,10 @@ export default class AmmRouter extends Contract {
     assert(amountOut > 0n, "INSUFFICIENT_HOP_OUTPUT");
     return amountOut;
   }
+
+  // Alkanes runs a contract's first call when it is created, and a revert
+  // rolls the creation back. The swaps revert without input assets, so a
+  // deployment calls this read-only entrypoint instead: create with [0].
+  @view({ opcode: 0 })
+  version(): u128 { return 1n; }
 }

@@ -221,6 +221,9 @@ test('AmmRouter validates routes and rolls back rejected ones',()=>{
   assert.throws(()=>vm.call({target:router,inputs:[1,...ids(A,poolAB,B,poolCB,C),0],incoming:[{id:A,value:1n}]}),/swap2 expects 12 inputs/);
   assert.throws(()=>vm.call({target:router,inputs:[2,...ids(A,poolAB,B),0],incoming:[{id:A,value:1n}]}),/swap1 expects 8 inputs/);
   assert.throws(()=>vm.call({target:router,inputs:[3]}),/Unrecognized opcode/);
+  // The deployment entrypoint: a read-only call that succeeds without assets.
+  assert.equal(u128.decode(vm.simulate({target:router,inputs:[0]}).data),1n);
+  assert.throws(()=>vm.call({target:router,inputs:[0],incoming:[{id:A,value:1n}]}),/rejects incoming assets/);
   assert.deepEqual(world(vm),before);
   assertNoCustody(vm);
 });
