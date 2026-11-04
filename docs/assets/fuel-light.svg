@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="526" viewBox="0 0 880 526" role="img" aria-labelledby="title desc">
+<title id="title">Fuel per call: alkanes-ts against optimized Rust</title>
+<desc id="desc">Counter read: TypeScript 9,011 fuel, Rust 45,734 fuel, 5.1 times less; Counter increment: TypeScript 11,862 fuel, Rust 53,254 fuel, 4.5 times less; Token mint: TypeScript 13,706 fuel, Rust 77,287 fuel, 5.6 times less; Token cross-contract call: TypeScript 16,061 fuel, Rust 59,516 fuel, 3.7 times less; CappedToken supply view: TypeScript 5,175 fuel, Rust 54,730 fuel, 10.6 times less; CappedToken mint with auth: TypeScript 86,925 fuel, Rust 206,942 fuel, 2.4 times less.</desc>
+<rect x="0.5" y="0.5" width="879" height="525" rx="12" fill="#fcfcfb" stroke="#e4e3df"/>
+<text x="40" y="52" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="22" font-weight="600" fill="#0b0b0b">Fuel per call on the canonical Alkanes indexer</text>
+<text x="40" y="78" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" fill="#52514e">alkanes-rs v3.0.0-rc.4 · wasmi 0.37.2 · host and storage charges included · lower is better</text>
+<path d="M40,99 h10.00 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-10.00 z" fill="#2a78d6"/>
+<text x="62" y="108" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#52514e">TypeScript (scriptc 0.4.7)</text>
+<path d="M250,99 h10.00 a4,4 0 0 1 4,4 v2 a4,4 0 0 1 -4,4 h-10.00 z" fill="#eb6834"/>
+<text x="272" y="108" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#52514e">Rust O3, fat LTO, wasm-opt O3</text>
+<text x="840" y="108" text-anchor="end" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#8a8984">less fuel</text>
+<text x="40" y="142" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#0b0b0b">Counter</text>
+<text x="40" y="160" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#52514e">read</text>
+<path d="M250,132 h77.96 a4,4 0 0 1 4,4 v4 a4,4 0 0 1 -4,4 h-77.96 z" fill="#2a78d6"/>
+<text x="339.964752700398" y="143" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#52514e">9,011</text>
+<path d="M250,146 h412.00 a4,4 0 0 1 4,4 v4 a4,4 0 0 1 -4,4 h-412.00 z" fill="#eb6834"/>
+<text x="674" y="157" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#52514e">45,734</text>
+<text x="840" y="153" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="22" font-weight="700" fill="#0b0b0b">5.1×</text>
+<text x="40" y="198" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#0b0b0b">Counter</text>
+<text x="40" y="216" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#52514e">increment</text>
+<path d="M250,188 h88.66 a4,4 0 0 1 4,4 v4 a4,4 0 0 1 -4,4 h-88.66 z" fill="#2a78d6"/>
+<text x="350.66143388290084" y="199" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#52514e">11,862</text>
+<path d="M250,202 h412.00 a4,4 0 0 1 4,4 v4 a4,4 0 0 1 -4,4 h-412.00 z" fill="#eb6834"/>
+<text x="674" y="213" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#52514e">53,254</text>
+<text x="840" y="209" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="22" font-weight="700" fill="#0b0b0b">4.5×</text>
+<text x="40" y="254" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#0b0b0b">Token</text>
+<text x="40" y="272" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#52514e">mint</text>
+<path d="M250,244 h69.77 a4,4 0 0 1 4,4 v4 a4,4 0 0 1 -4,4 h-69.77 z" fill="#2a78d6"/>
+<text x="331.7730278054524" y="255" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#52514e">13,706</text>
+<path d="M250,258 h412.00 a4,4 0 0 1 4,4 v4 a4,4 0 0 1 -4,4 h-412.00 z" fill="#eb6834"/>
+<text x="674" y="269" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#52514e">77,287</text>
+<text x="840" y="265" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="22" font-weight="700" fill="#0b0b0b">5.6×</text>
+<text x="40" y="310" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#0b0b0b">Token</text>
+<text x="40" y="328" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#52514e">cross-contract call</text>
+<path d="M250,300 h108.26 a4,4 0 0 1 4,4 v4 a4,4 0 0 1 -4,4 h-108.26 z" fill="#2a78d6"/>
+<text x="370.2618455541367" y="311" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#52514e">16,061</text>
+<path d="M250,314 h412.00 a4,4 0 0 1 4,4 v4 a4,4 0 0 1 -4,4 h-412.00 z" fill="#eb6834"/>
+<text x="674" y="325" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#52514e">59,516</text>
+<text x="840" y="321" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="22" font-weight="700" fill="#0b0b0b">3.7×</text>
+<text x="40" y="366" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#0b0b0b">CappedToken</text>
+<text x="40" y="384" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#52514e">supply view</text>
+<path d="M250,356 h35.33 a4,4 0 0 1 4,4 v4 a4,4 0 0 1 -4,4 h-35.33 z" fill="#2a78d6"/>
+<text x="297.3349168646081" y="367" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#52514e">5,175</text>
+<path d="M250,370 h412.00 a4,4 0 0 1 4,4 v4 a4,4 0 0 1 -4,4 h-412.00 z" fill="#eb6834"/>
+<text x="674" y="381" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#52514e">54,730</text>
+<text x="840" y="377" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="22" font-weight="700" fill="#0b0b0b">10.6×</text>
+<text x="40" y="422" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="14" font-weight="600" fill="#0b0b0b">CappedToken</text>
+<text x="40" y="440" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" fill="#52514e">mint with auth</text>
+<path d="M250,412 h170.74 a4,4 0 0 1 4,4 v4 a4,4 0 0 1 -4,4 h-170.74 z" fill="#2a78d6"/>
+<text x="432.73881570681635" y="423" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#52514e">86,925</text>
+<path d="M250,426 h412.00 a4,4 0 0 1 4,4 v4 a4,4 0 0 1 -4,4 h-412.00 z" fill="#eb6834"/>
+<text x="674" y="437" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" fill="#52514e">206,942</text>
+<text x="840" y="433" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="22" font-weight="700" fill="#0b0b0b">2.4×</text>
+<line x1="40" y1="474" x2="840" y2="474" stroke="#e4e3df"/>
+<text x="40" y="498" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" fill="#8a8984">Bars are scaled to each call's Rust fuel. Same indexer, auth binary, and response checks for both. Data: bench/CANONICAL_V3_*.md</text>
+</svg>
