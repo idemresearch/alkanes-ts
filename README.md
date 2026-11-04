@@ -33,10 +33,7 @@ engine in the output: each contract is a small Wasm module the indexer runs
 like any Rust contract, and on the canonical indexer it burns several times
 less fuel than optimized Rust.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/fuel-dark.svg">
-  <img alt="Fuel per call on the canonical Alkanes indexer (alkanes-rs v3.0.0-rc.4). TypeScript against Rust O3, fat LTO, wasm-opt O3: Counter read 9,011 vs 45,734 (5.1× less); Counter increment 11,862 vs 53,254 (4.5×); Token mint 13,706 vs 77,287 (5.6×); Token cross-contract call 16,061 vs 59,516 (3.7×); CappedToken supply view 5,175 vs 54,730 (10.6×); CappedToken mint with auth 86,925 vs 206,942 (2.4×)." src="docs/assets/fuel-light.svg" width="880">
-</picture>
+![Fuel per call on the canonical Alkanes indexer (alkanes-rs v3.0.0-rc.4). TypeScript against Rust O3, fat LTO, wasm-opt O3: Counter read 9,011 vs 45,734 (5.1× less); Counter increment 11,862 vs 53,254 (4.5×); Token mint 13,706 vs 77,287 (5.6×); Token cross-contract call 16,061 vs 59,516 (3.7×); CappedToken supply view 5,175 vs 54,730 (10.6×); CappedToken mint with auth 86,925 vs 206,942 (2.4×).](docs/assets/fuel.svg)
 
 ## Highlights
 
@@ -128,3 +125,10 @@ the call back. [Architecture](docs/ARCHITECTURE.md) has the details.
   [Counter/Token details](docs/EXAMPLES_OPTIMIZATION.md)
 
 The package is private; `@alkanes/contract` is the proposed public entry point.
+
+## License
+
+alkanes-ts is built by [Idem Research](https://github.com/idemresearch) and
+licensed under the [Apache License, Version 2.0](LICENSE). Copyright 2026 Idem
+Research. `shim/printf.c` includes code derived from musl libc under the MIT
+license; see [NOTICE](NOTICE).

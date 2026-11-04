@@ -1,14 +1,6 @@
 //! Counter and Token through the same unmodified indexer as CappedToken.
 use super::*;
 const COUNTER: &[u8]=include_bytes!("./counter.wasm");
-#[cfg(feature="native-counter")]
-const COUNTER_NATIVE: &[u8]=include_bytes!("./counter-native.wasm");
-#[cfg(feature="native-counter")]
-const COUNTER_042: &[u8]=include_bytes!("./counter-c-sdk-0.4.2.wasm");
-#[cfg(feature="native-counter")]
-const COUNTER_COERCION: &[u8]=include_bytes!("./counter-native-generic-coercion.wasm");
-#[cfg(feature="native-counter")]
-const NATIVE_WORD_PROBE: &[u8]=include_bytes!("./native-word-probe.wasm");
 const TOKEN: &[u8]=include_bytes!("./token.wasm");
 const COUNTER_RS: &[u8]=include_bytes!("./counter-rust.wasm");
 const COUNTER_OPT: &[u8]=include_bytes!("./counter-rust-opt.wasm");
@@ -47,8 +39,7 @@ fn counter_state(n:u128)->BTreeMap<String,Vec<u8>>{
 #[wasm_bindgen_test]
 fn counter_checked_storage_loops_height_and_rollback(){
     let mut reference=None;
-    let mut variants=vec![COUNTER,COUNTER_RS,COUNTER_OPT];
-    #[cfg(feature="native-counter")]{variants.extend([COUNTER_NATIVE,COUNTER_042]);}
+    let variants=vec![COUNTER,COUNTER_RS,COUNTER_OPT];
     for binary in variants{
         deploy(binary,vec![0]);let mut outputs=vec![];
         let (_,increment)=invoke(1,vec![1,(1u128<<96)+5],None,880001);
@@ -109,11 +100,10 @@ fn benchmark_examples(){
     let mut counter_variants=vec![("typescript",COUNTER),("rust-o3-lto",COUNTER_RS),("rust-o3-lto-wasm-opt",COUNTER_OPT)];
     let mut token_variants=vec![("typescript",TOKEN),("rust-o3-lto",TOKEN_RS),("rust-o3-lto-wasm-opt",TOKEN_OPT)];
     #[cfg(feature="examples-baseline")]{counter_variants.push(("typescript-before",COUNTER_BEFORE));token_variants.push(("typescript-before",TOKEN_BEFORE));}
-    #[cfg(feature="native-counter")]{counter_variants.extend([("native-0.4.2",COUNTER_NATIVE),("c-sdk-0.4.2",COUNTER_042),("native-generic-coercion",COUNTER_COERCION)]);}
     let mut samples=BTreeMap::<(&str,&str),Vec<(u64,f64)>>::new();let mut references=BTreeMap::new();
     for iteration in 0..iterations+3{
         let mut contracts=vec![("counter",&counter_variants)];
-        if !cfg!(feature="native-counter"){contracts.push(("token",&token_variants));}
+        contracts.push(("token",&token_variants));
         for (contract,variants)in contracts{
             for offset in 0..variants.len(){
                 let (name,binary)=variants[(iteration+offset)%variants.len()];
@@ -148,19 +138,3 @@ fn benchmark_examples(){
     }
 }
 
-#[cfg(feature="native-counter")]
-#[wasm_bindgen_test]
-fn native_checked_u128_uses_actual_runtime(){
-    deploy(NATIVE_WORD_PROBE,vec![0,0,0]);
-    let mut height=880001;
-    for (a,b) in [(0,u128::MAX),(1,u128::MAX),(u64::MAX as u128,u64::MAX as u128),((1u128<<96)+5,3),(1u128<<127,2),(u128::MAX,u128::MAX)]{
-        let (_,e)=invoke(1,vec![0,a,b],None,height);height+=1;
-        if let Some(expected)=a.checked_mul(b){assert_eq!(number(e.result.as_ref().unwrap()),expected);}else{assert_revert(e,"u128 overflow");}
-        let (_,e)=invoke(1,vec![5,a,b],None,height);height+=1;
-        if let Some(expected)=a.checked_sub(b){assert_eq!(number(e.result.as_ref().unwrap()),expected);}else{assert_revert(e,"u128 underflow");}
-    }
-    for a in [0,1,(1u128<<53)+1,(1u128<<53)+3,(1u128<<96)+5,u128::MAX]{
-        let (_,e)=invoke(1,vec![1,a],None,height);height+=1;
-        if a==u128::MAX{assert_revert(e,"u128 overflow");}else{assert_eq!(number(e.result.as_ref().unwrap()),(a as f64) as u128);}
-    }
-}
