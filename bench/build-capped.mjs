@@ -21,8 +21,10 @@ for(const name of ['capped-token','test-auth']){
 }
 writeFileSync(join(work,'Cargo.toml'),'[workspace]\nmembers=["capped-token","test-auth"]\nresolver="2"\n[profile.release]\nopt-level=3\nlto="fat"\ncodegen-units=1\npanic="abort"\n');
 copyFileSync(join(upstream,'Cargo.lock'),join(work,'Cargo.lock'));
-execFileSync('cargo',[`+${toolchain}`,'build','--release','--target','wasm32-unknown-unknown','--manifest-path',join(work,'Cargo.toml')],{stdio:'inherit',env:{...process.env,CARGO_TARGET_DIR:join(root,'build/rust-comparison/target')}});
-for(const name of ['capped-token','test-auth'])copyFileSync(join(root,'build/rust-comparison/target/wasm32-unknown-unknown/release',`alkanes_bench_${name.replaceAll('-','_')}.wasm`),join(out,`rust-${name}.wasm`));
+// Each upstream revision builds in its own target directory (see build-rust.mjs).
+const targetDir=join(root,'build/rust-comparison/target',execFileSync('git',['rev-parse','HEAD'],{cwd:upstream,encoding:'utf8'}).trim().slice(0,12));
+execFileSync('cargo',[`+${toolchain}`,'build','--release','--target','wasm32-unknown-unknown','--manifest-path',join(work,'Cargo.toml')],{stdio:'inherit',env:{...process.env,CARGO_TARGET_DIR:targetDir}});
+for(const name of ['capped-token','test-auth'])copyFileSync(join(targetDir,'wasm32-unknown-unknown/release',`alkanes_bench_${name.replaceAll('-','_')}.wasm`),join(out,`rust-${name}.wasm`));
 const features=['--mvp-features','--enable-bulk-memory','--enable-sign-ext','--enable-nontrapping-float-to-int','--enable-mutable-globals'];
 execFileSync(join(root,'node_modules/.bin/wasm-opt'),[...features,'-O3',join(out,'rust-capped-token.wasm'),'-o',join(out,'rust-capped-token-opt.wasm')],{stdio:'inherit'});
 const sha=p=>createHash('sha256').update(readFileSync(p)).digest('hex');

@@ -69,15 +69,18 @@ const metadata = [
   "profile: opt-level=3, lto=fat, codegen-units=1, panic=abort",
   `wasm-opt: ${command(join(root,'node_modules/.bin/wasm-opt'),['--version'])}`,
 ];
+// Path dependencies from different alkanes-rs checkouts can share crate names
+// and versions, so each upstream revision builds in its own target directory.
+const targetDir = join(work, "target", command("git", ["rev-parse", "HEAD"], upstream).slice(0, 12));
 for (const numeric of [false, true]) {
   execFileSync("cargo", [`+${toolchain}`, "build", "--release", "--target", "wasm32-unknown-unknown",
     "--manifest-path", join(work, "Cargo.toml"), ...(numeric ? ["--features", "numeric-fast-path"] : [])],
-  { cwd: root, stdio: "inherit", env: { ...process.env, CARGO_TARGET_DIR: join(work, "target") } });
+  { cwd: root, stdio: "inherit", env: { ...process.env, CARGO_TARGET_DIR: targetDir } });
   const directory = numeric ? join(out, "numeric-fast-path") : out;
   mkdirSync(directory, { recursive: true });
   for (const name of ["counter", "token"]) {
     const file = join(directory, `rust-${name}.wasm`);
-    copyFileSync(join(work, "target/wasm32-unknown-unknown/release", `alkanes_bench_${name}.wasm`), file);
+    copyFileSync(join(targetDir, "wasm32-unknown-unknown/release", `alkanes_bench_${name}.wasm`), file);
     metadata.push(`${numeric ? "numeric-fast-path/" : ""}rust-${name}.wasm SHA-256: ${sha256(file)}`);
     const optimized=join(directory,`rust-${name}-opt.wasm`);
     execFileSync(join(root,'node_modules/.bin/wasm-opt'),['--mvp-features','--enable-bulk-memory','--enable-sign-ext','--enable-nontrapping-float-to-int','--enable-mutable-globals','-O3',file,'-o',optimized],{stdio:'inherit'});
