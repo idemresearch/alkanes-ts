@@ -47,6 +47,14 @@ if (target < 0 || !/^wasm32-wasi/.test(args[target + 1] ?? "")) {
 }
 const outFile = args[output + 1];
 if (report) args = args.filter((arg) => arg !== "-Wl,--strip-debug");
+// zig cc gives wasm32 modules a 16 MiB shadow stack, placed before the data,
+// so every instance starts with about 17 MB of linear memory. A contract
+// stack this deep is never needed; ALKANES_STACK_SIZE (bytes) sets it.
+const stackSize = process.env.ALKANES_STACK_SIZE;
+if (stackSize !== undefined) {
+  if (!/^[1-9][0-9]*$/.test(stackSize) || Number(stackSize) % 16 !== 0) fail(`ALKANES_STACK_SIZE must be a positive multiple of 16, got ${stackSize}`);
+  args = [...args, `-Wl,-z,stack-size=${stackSize}`]; // appended: later code indexes args
+}
 
 const zig = process.env.ALKANES_ZIG || "zig";
 function link(inputs) {

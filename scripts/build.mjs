@@ -179,7 +179,7 @@ export function buildLibrary({ entry, work, out, extraExports = [], benchmark = 
   if (word) {
     adapterSource = join(work, "adapter.wat");
     writeFileSync(adapterSource, wordAdapter(word === 'sdk'));
-    run("zig", ["cc", "--target=wasm32-wasi", "-O3", "-flto", "-mbulk-memory", "-nostdlib", "-fno-stack-protector", "-Wl,--no-entry", "-Wl,--import-memory", "-Wl,--export=__stack_pointer", join(root,word === 'sdk'?"shim/word-sdk.c":"shim/word.c"), "-o",join(work,"word.wasm")]);
+    run("zig", ["cc", "--target=wasm32-wasi", "-O3", "-flto", "-mbulk-memory", "-nostdlib", "-fno-stack-protector", "-Wl,--no-entry", "-Wl,--import-memory", "-Wl,--export=__stack_pointer", ...(process.env.ALKANES_STACK_SIZE ? [`-Wl,-z,stack-size=${process.env.ALKANES_STACK_SIZE}`] : []), join(root,word === 'sdk'?"shim/word-sdk.c":"shim/word.c"), "-o",join(work,"word.wasm")]);
     run(bin("wasm-dis"),[...FEATURES,join(work,"word.wasm"),"-o",join(work,"word.wat")]);
     const native=readFileSync(join(work,"word.wat"),"utf8");
     if(native.split('(import "env" "memory"').length!==2||/^\s*\(data\b/m.test(native))throw new Error("word SDK requires imported memory and no static data segments");
