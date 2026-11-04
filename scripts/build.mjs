@@ -75,14 +75,25 @@ export function minimalPrintfObject() {
   return (printfObject = object);
 }
 
-function linkerEnvironment(report) {
+// Shadow-stack size for contract modules. zig's wasm32 default is 16 MiB,
+// placed before the data; 1 MiB matches Rust's wasm32 default and keeps each
+// instance's initial memory small (scripts/link.mjs explains the cost).
+export const CONTRACT_STACK_SIZE = 1 << 20;
+
+function linkerEnvironment(report, printf, stackSize) {
+  if (printf !== "minimal" && stackSize === null) return {};
   const linker = join(root, "scripts", "link.mjs");
   try {
     accessSync(linker, constants.X_OK);
   } catch {
     chmodSync(linker, 0o755); // scriptc executes SCRIPTC_LINKER directly
   }
-  return { SCRIPTC_LINKER: linker, ALKANES_LINK_OBJECTS: minimalPrintfObject(), ALKANES_LINK_REPORT: report };
+  return {
+    SCRIPTC_LINKER: linker,
+    ALKANES_LINK_OBJECTS: printf === "minimal" ? minimalPrintfObject() : "",
+    ...(printf === "minimal" ? { ALKANES_LINK_REPORT: report } : {}),
+    ...(stackSize === null ? {} : { ALKANES_STACK_SIZE: String(stackSize) }),
+  };
 }
 
 function buildContract(name, { snapshot = true, printf = "minimal" } = {}) {
@@ -122,8 +133,13 @@ export function meta(): Uint8Array {
 // The isolation fixtures use the production linker/optimizer, with additional
 // scalar exports and a benchmark-only hook into the adapter's init guard.
 export function buildLibrary({ entry, work, out, extraExports = [], benchmark = false,
-  compiler = bin("scriptc"), runtimePack, word = false, snapshot = true, printf = "minimal" }) {
+  compiler = bin("scriptc"), runtimePack, word = false, snapshot = true, printf = "minimal",
+  stackSize = CONTRACT_STACK_SIZE }) {
   if (printf !== "minimal" && printf !== "libc") throw new Error(`unknown printf option ${printf}`);
+  // null keeps the toolchain's 16 MiB stack, to reproduce earlier binaries.
+  if (stackSize !== null && !(Number.isInteger(stackSize) && stackSize > 0 && stackSize % 16 === 0)) {
+    throw new Error(`stackSize must be a positive multiple of 16 or null, got ${stackSize}`);
+  }
   let snapshotInfo = null;
   mkdirSync(work, { recursive: true });
   mkdirSync(dirname(out), { recursive: true });
@@ -161,7 +177,7 @@ export function buildLibrary({ entry, work, out, extraExports = [], benchmark = 
     ...process.env,
     SCRIPTC_TARGET: "wasm32-wasi",
     ...(runtimePack ? { SCRIPTC_RUNTIME_PACK: runtimePack } : {}),
-    ...(printf === "minimal" ? linkerEnvironment(printfReport) : {}),
+    ...linkerEnvironment(printfReport, printf, stackSize),
   });
   let linkedPrintf = "libc";
   if (printf === "minimal") {
@@ -179,7 +195,7 @@ export function buildLibrary({ entry, work, out, extraExports = [], benchmark = 
   if (word) {
     adapterSource = join(work, "adapter.wat");
     writeFileSync(adapterSource, wordAdapter(word === 'sdk'));
-    run("zig", ["cc", "--target=wasm32-wasi", "-O3", "-flto", "-mbulk-memory", "-nostdlib", "-fno-stack-protector", "-Wl,--no-entry", "-Wl,--import-memory", "-Wl,--export=__stack_pointer", join(root,word === 'sdk'?"shim/word-sdk.c":"shim/word.c"), "-o",join(work,"word.wasm")]);
+    run("zig", ["cc", "--target=wasm32-wasi", "-O3", "-flto", "-mbulk-memory", "-nostdlib", "-fno-stack-protector", "-Wl,--no-entry", "-Wl,--import-memory", "-Wl,--export=__stack_pointer", ...(stackSize === null ? [] : [`-Wl,-z,stack-size=${stackSize}`]), join(root,word === 'sdk'?"shim/word-sdk.c":"shim/word.c"), "-o",join(work,"word.wasm")]);
     run(bin("wasm-dis"),[...FEATURES,join(work,"word.wasm"),"-o",join(work,"word.wat")]);
     const native=readFileSync(join(work,"word.wat"),"utf8");
     if(native.split('(import "env" "memory"').length!==2||/^\s*\(data\b/m.test(native))throw new Error("word SDK requires imported memory and no static data segments");

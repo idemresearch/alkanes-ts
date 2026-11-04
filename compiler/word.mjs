@@ -14,7 +14,7 @@ export function lowerWords({filename,source,manifest,abi,sdkDirectory}){
   const cls=file.statements.find(n=>ts.isClassDeclaration(n));
   const fields=new Map(manifest.state.map(f=>[f.field,f]));
   const methods=new Map(manifest.methods.map(m=>[m.name,m]));
-  const no=()=>{throw unsupported;};
+  const no=()=>{if(process.env.ALKANES_DEBUG_LOWERING)console.error(new Error('word lowering fallback').stack);throw unsupported;};
   // Byte strings and u128 literals are pure, so each distinct value becomes
   // one module constant built during (snapshotted) module initialization.
   // Word handles are immutable and C leaves only read byte arguments.
@@ -32,6 +32,15 @@ export function lowerWords({filename,source,manifest,abi,sdkDirectory}){
    for(const b of clause.namedBindings.elements){if(b.propertyName||b.isTypeOnly||!mathOps.has(b.name.text))return false;math.add(b.name.text);}
    return true;
   };
+  // height() and the AlkaneId, Cellpack and AlkaneTransferParcel
+  // constructors, as unaliased named value imports from a module exporting them.
+  const sdkValues=new Map([['height',['runtime.ts','index.ts']],['AlkaneId',['types.ts','index.ts']],['Cellpack',['types.ts','index.ts']],['AlkaneTransferParcel',['types.ts','index.ts']]]),sdkNames=new Set();
+  const sdkImport=node=>{
+   const from=resolve(dirname(filename),node.moduleSpecifier.text),clause=node.importClause;
+   if(!clause||clause.isTypeOnly||clause.name||!clause.namedBindings||!ts.isNamedImports(clause.namedBindings))return false;
+   for(const b of clause.namedBindings.elements){if(b.propertyName||b.isTypeOnly||!sdkValues.get(b.name.text)?.some(m=>from===resolve(sdkDirectory,m)))return false;sdkNames.add(b.name.text);}
+   return true;
+  };
   // Undecorated methods are helpers; their types come from the declaration.
   const helper=member=>{
    if(!ts.isMethodDeclaration(member)||ts.getDecorators(member)?.length||!ts.isIdentifier(member.name)||!member.body||member.typeParameters||member.asteriskToken||member.questionToken)return false;
@@ -46,7 +55,7 @@ export function lowerWords({filename,source,manifest,abi,sdkDirectory}){
    return true;
   };
   // ---- end extension state ----
-  for(const node of file.statements)if(ts.isImportDeclaration(node)&&resolve(dirname(filename),node.moduleSpecifier.text)!==resolve(sdkDirectory,'authoring.ts')&&!mathImport(node))no();
+  for(const node of file.statements)if(ts.isImportDeclaration(node)&&resolve(dirname(filename),node.moduleSpecifier.text)!==resolve(sdkDirectory,'authoring.ts')&&!mathImport(node)&&!sdkImport(node))no();
   for(const member of cls.members){
    if(ts.isPropertyDeclaration(member)){if(member.name.getText(file)!=='incomingAssets'&&!fields.has(member.name.getText(file)))no();}
    else if(!ts.isMethodDeclaration(member)||!(methods.has(member.name.getText(file))||helper(member)))no();
@@ -56,6 +65,8 @@ export function lowerWords({filename,source,manifest,abi,sdkDirectory}){
   const code=[];
   for(const member of cls.members.filter(ts.isMethodDeclaration)){
    const method=methods.get(member.name.getText(file))??helpers.get(member.name.getText(file));
+   // Imported names are never shadowed, so each use below is the import.
+   {const visit=n=>{if((ts.isVariableDeclaration(n)||ts.isParameter(n))&&ts.isIdentifier(n.name)&&(sdkNames.has(n.name.text)||math.has(n.name.text)))no();ts.forEachChild(n,visit);};visit(member);}
    const names=new Map(method.params.map(p=>[p.name,p.type]));
    const type=n=>{
     const extended=typeExt(n);if(extended)return extended;
@@ -126,11 +137,15 @@ export function lowerWords({filename,source,manifest,abi,sdkDirectory}){
    // Wide kinds go through op3 so the hot op() leaf keeps its small frame.
    const arithmetic=new Map([['*',4],['/',5],['%',6]]);
    const lets=new Set();
+   const imported=(n,name)=>ts.isIdentifier(n)&&n.text===name&&sdkNames.has(name)&&!names.has(name);
+   // AlkaneId.equals: any receiver typed AlkaneId (helpers named equals are this.equals).
+   const equalsCall=n=>ts.isPropertyAccessExpression(n.expression)&&n.expression.name.text==='equals'&&n.expression.expression.kind!==ts.SyntaxKind.ThisKeyword;
    const isMyself=n=>ts.isPropertyAccessExpression(n)&&n.name.text==='myself'&&ts.isPropertyAccessExpression(n.expression)&&n.expression.name.text==='context'&&n.expression.expression.kind===ts.SyntaxKind.ThisKeyword;
    const helperCall=n=>ts.isCallExpression(n)&&ts.isPropertyAccessExpression(n.expression)&&n.expression.expression.kind===ts.SyntaxKind.ThisKeyword&&helpers.has(n.expression.name.text)?helpers.get(n.expression.name.text):null;
    const args=(n,types)=>{if(n.arguments.length!==types.length||n.arguments.some((a,i)=>type(a)!==types[i]))no();return n.arguments.map(a=>expr(a));};
    const typeExt=n=>{
     if(isMyself(n))return'AlkaneId';
+    if(ts.isNewExpression(n)&&imported(n.expression,'AlkaneId')){if(n.arguments?.length!==2||n.arguments.some(a=>type(a)!=='u128'))no();return'AlkaneId';}
     if(ts.isConditionalExpression(n)){if(type(n.condition)!=='boolean')no();const t=type(n.whenTrue);if(type(n.whenFalse)!==t)no();return t;}
     if(ts.isBinaryExpression(n)){
      const op=n.operatorToken.getText(file);
@@ -155,10 +170,14 @@ export function lowerWords({filename,source,manifest,abi,sdkDirectory}){
      if(!calls.has(method.name))calls.set(method.name,new Set());calls.get(method.name).add(h.name);
      return h.returns;
     }
+    if(imported(n.expression,'height')){if(n.arguments.length)no();return'u128';}
+    if(callee==='this.assets.available'){if(n.arguments.length!==1||type(n.arguments[0])!=='AlkaneId')no();return'u128';}
+    if(equalsCall(n)){if(n.arguments.length!==1||type(n.expression.expression)!=='AlkaneId'||type(n.arguments[0])!=='AlkaneId')no();return'boolean';}
     no();
    };
    const exprExt=n=>{
     if(isMyself(n))return`__alk_word.myself(${ctx})`;
+    if(ts.isNewExpression(n)&&imported(n.expression,'AlkaneId'))return`new __alk_word.Id(${expr(n.arguments[0])},${expr(n.arguments[1])})`;
     if(ts.isConditionalExpression(n))return`((${expr(n.condition)})?(${expr(n.whenTrue)}):(${expr(n.whenFalse)}))`;
     if(ts.isBinaryExpression(n)){
      const op=n.operatorToken.getText(file);
@@ -175,6 +194,9 @@ export function lowerWords({filename,source,manifest,abi,sdkDirectory}){
     }
     if(callee==='this.assets.received'||callee==='this.assets.held')return`__alk_word.${n.expression.name.text}(${ctx},${expr(n.arguments[0])})`;
     if(h){const call=`this.${h.name}(${n.arguments.map(a=>expr(a)).join(',')})`;return h.returns==='boolean'?`(${call}!==0)`:h.returns==='AlkaneId'?`__alk_word.at(${call})`:call;}
+    if(imported(n.expression,'height'))return`__alk_word.height(${ctx})`;
+    if(callee==='this.assets.available')return`__alk_word.available(${ctx},${expr(n.arguments[0])})`;
+    if(equalsCall(n))return`__alk_word.same(${ctx},${expr(n.expression.expression)},${expr(n.arguments[0])})`;
     return undefined;
    };
    const statementExt=n=>{
@@ -194,6 +216,28 @@ export function lowerWords({filename,source,manifest,abi,sdkDirectory}){
     }
     if(!ts.isCallExpression(e))return undefined;
     const callee=e.expression.getText(file),h=helperCall(e);
+    // this.assets.call(new Cellpack(target, [u128...]), new AlkaneTransferParcel()
+    // .pay(id, amount)..., fuel) with its response unused. Arguments are
+    // evaluated first in JS order (target, inputs, then each pay's id and
+    // amount); the fuel limit is an integer literal that crosses as a double.
+    if(callee==='this.assets.call'){
+     const [cellpack,parcel,budget]=e.arguments;
+     if(e.arguments.length!==3||!ts.isNewExpression(cellpack)||!imported(cellpack.expression,'Cellpack')||cellpack.arguments?.length!==2||!ts.isArrayLiteralExpression(cellpack.arguments[1]))no();
+     const [target,list]=cellpack.arguments;
+     if(type(target)!=='AlkaneId'||list.elements.some(x=>type(x)!=='u128'))no();
+     const pays=[];let node=parcel;
+     while(ts.isCallExpression(node)&&ts.isPropertyAccessExpression(node.expression)&&node.expression.name.text==='pay'){
+      if(node.arguments.length!==2||type(node.arguments[0])!=='AlkaneId'||type(node.arguments[1])!=='u128')no();
+      pays.unshift(node.arguments);node=node.expression.expression;
+     }
+     if(!ts.isNewExpression(node)||!imported(node.expression,'AlkaneTransferParcel')||node.arguments?.length)no();
+     const fuel=ts.isNumericLiteral(budget)?Number(budget.text):NaN;
+     if(!Number.isSafeInteger(fuel)||fuel<0||list.elements.length>0xffff||pays.length>0x7fff)no();
+     if(pays.length)used.add(18);
+     const parts=[],temp=x=>{const name='__alk_x'+parts.length;parts.push(`const ${name}=${expr(x)};`);return name;};
+     const id=temp(target),inputs=list.elements.map(temp),transfers=pays.map(([asset,amount])=>[temp(asset),temp(amount)]);
+     return`{${parts.join('')}const __alk_b=__alk_word.cellpack(${ctx},${id},${inputs.length+transfers.length*65536});${inputs.map(v=>`__alk_word.arg(${ctx},__alk_b,${v});`).join('')}${transfers.map(([asset,amount])=>`__alk_word.pay(${ctx},__alk_b,${asset},${amount});`).join('')}__alk_word.invoke(${ctx},__alk_b,${literal(fuel)});}${check}`;
+    }
     if(callee==='this.assets.retain'||callee==='this.assets.send'){
      const [id,amount]=args(e,['AlkaneId','u128']);
      if(callee==='this.assets.retain')used.add(14);else{used.add(15);used.add(17);}
@@ -244,7 +288,7 @@ export function lowerWords({filename,source,manifest,abi,sdkDirectory}){
   const errors=['','unexpected end of input reading u128','u128 overflow','u128 underflow','invalid u128 storage','uninitialized or invalid AlkaneId state','view cannot mutate storage or call a mutating contract','AUTH_ASSET_REQUIRED','AUTH_REJECTED','AUTH_FUEL_OUT_OF_RANGE','Extcall failed (no details available)','Extcall failed: ','Unrecognized opcode '];
   // Codes 13+ (shim/word.c) are emitted only when the contract can raise them,
   // so contracts outside the extension keep their exact status dispatch.
-  for(const [code,message] of [[13,'u128 division by zero'],[14,'INSUFFICIENT_LEDGER'],[15,'INSUFFICIENT_CUSTODY'],[16,'SELF_CUSTODY_UNSUPPORTED'],[17,'SELF_SEND_USE_MINT_SELF']])errors[code]=used.has(code)?message:'';
+  for(const [code,message] of [[13,'u128 division by zero'],[14,'INSUFFICIENT_LEDGER'],[15,'INSUFFICIENT_CUSTODY'],[16,'SELF_CUSTODY_UNSUPPORTED'],[17,'SELF_SEND_USE_MINT_SELF'],[18,'PRECOMPILE_TAKES_NO_ASSETS']])errors[code]=used.has(code)?message:'';
   const body=`function __alk_finish(__alk_c:number,value:number,len:number):number{
  const code=__alk_word.status(__alk_c);
  ${errors.flatMap((s,i)=>s?[`if(code===${i})return __alk_word.finish(__alk_c,value,len,${bytes('Error: '+s)});`]:[]).join('\n')}

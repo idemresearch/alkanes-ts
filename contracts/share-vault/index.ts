@@ -23,9 +23,15 @@ import { mulDiv, mulDivUp } from "../../sdk/u128.ts";
 // invested. Now that deposit buys and sells at the pre-harvest price, so it
 // earns only what vests while it is actually held, exactly like any other
 // holder, and an existing holder keeps the yield that vests over its holding.
-// Rounding locked(h) up rounds E down, so the lock always favors the vault.
-// A holder who exits before the lock has vested leaves the remainder to those
-// still holding; if nobody is left, it vests to the virtual shares below.
+// This only covers yield that accrued within D blocks of the harvest: a
+// deposit held k blocks across a harvest earns k / D of its pro-rata share,
+// so D should be at least the interval between harvests (see initialize).
+// Redemptions price against E(h), the lock rounded up, and deposits against
+// E+(h) = managed - floor(L * r / D) >= E(h), the lock rounded down. A
+// smaller E pays out less and a larger one issues fewer shares, so the
+// rounding favors the vault both ways. Whatever is still locked keeps vesting
+// to whoever holds shares as it unlocks: the remaining holders, later
+// depositors and, if nobody is left, the virtual shares below.
 //
 // Conversions use a virtual offset of 1 asset and 1000 shares (a three-digit
 // decimals offset, as in OpenZeppelin's ERC4626):
@@ -83,19 +89,24 @@ export default class ShareVault extends Contract {
     // underlying, the auth call would send it to the token's own opcode 1.
     assert(!asset.equals(this.context.myself), "INVALID_ASSET");
     assert(!authority.equals(this.context.myself) && !authority.equals(asset), "INVALID_AUTHORITY");
-    // D divides in locked(), so it must be nonzero; one block already keeps a
-    // same-block deposit from sharing a harvest. The upper bound, about 20
-    // years of blocks, rejects a mistyped period that would lock yield away
-    // from every holder for good.
+    // D divides in locked(), so it must be nonzero. D is the deployer's
+    // choice and should be at least the interval between harvests: a
+    // deposit held k blocks across a harvest earns k / D of its pro-rata share
+    // of that harvest. With D = 1, a deposit made just before a harvest takes
+    // nearly its full share one block later; one block only stops a
+    // same-block round trip. The upper bound, about 20 years of blocks,
+    // rejects a mistyped period that would lock yield away from every holder
+    // for good.
     assert(vestingBlocks >= 1n && vestingBlocks <= 1_051_200n, "INVALID_VESTING");
     this.underlying = asset;
     this.authority = authority;
     this.vesting = vestingBlocks;
   }
 
-  // Deposits all incoming underlying and issues shares, rounded down.
-  // I1: S + s <= S + x(S+V)/(E+1) <= VE + Vx, because S+V <= V(E+1) by I1,
-  // and the deposit leaves the lock alone, so E grows by exactly x.
+  // Deposits all incoming underlying and issues shares, rounded down, priced
+  // against E+ >= E. I1: S + s <= S + x(S+V)/(E+ + 1) <= S + x(S+V)/(E+1) <=
+  // VE + Vx, because S+V <= V(E+1) by I1, and the deposit leaves the lock
+  // alone, so E grows by exactly x.
   // I5: A grows and locked(h) does not change.
   @method({ opcode: 1, incomingAssets: "forward" })
   deposit(minShares: u128): u128 {
@@ -108,7 +119,7 @@ export default class ShareVault extends Contract {
     // I4 is checked on each new total, in the same order as previewDeposit,
     // which returns 0 exactly when one of the next three checks fails.
     assert(assets <= this.assetRoom(managed), "VAULT_FULL");
-    const shares = this.toShares(assets, managed - this.locked(), issued);
+    const shares = this.toShares(assets, managed - this.locked(false), issued);
     assert(shares > 0n, "ZERO_SHARES");
     assert(shares <= this.shareRoom(issued), "VAULT_FULL");
     assert(shares >= minShares, "SLIPPAGE");
@@ -132,7 +143,7 @@ export default class ShareVault extends Contract {
     assert(shares > 0n, "ZERO_SHARES");
     const managed = this.managed;
     const issued = this.issued;
-    const assets = this.toAssets(shares, managed - this.locked(), issued);
+    const assets = this.toAssets(shares, managed - this.locked(true), issued);
     assert(assets > 0n, "ZERO_ASSETS");
     assert(assets >= minAssets, "SLIPPAGE");
     // I3: the shares leave circulation into the vault's own balance.
@@ -159,7 +170,10 @@ export default class ShareVault extends Contract {
   //
   // Whatever of the previous lock has not vested yet is locked again with the
   // gain and vests over the full new period, so a second harvest during
-  // vesting delays that remainder but never releases it early.
+  // vesting delays that remainder but never releases it early. Harvests every
+  // k < D blocks therefore decay an old lock geometrically rather than
+  // linearly, and the rounded-up lock can hold a residue of about D / k units
+  // for as long as they continue. Only the authority harvests.
   // I1: S and E are unchanged at height h: the new A is custody and the new
   // lock is locked(h) + gain = locked(h) + custody - A, so custody - new lock
   // = A - locked(h). I5: the new lock is at most A + gain = custody, the new A.
@@ -178,7 +192,7 @@ export default class ShareVault extends Contract {
     // I4: issued is unchanged, so only managed + 1 needs room.
     assert(gain <= this.assetRoom(managed), "VAULT_FULL");
     // locked() reads the previous lock, so it runs before the lock is replaced.
-    const stillLocked = this.locked();
+    const stillLocked = this.locked(true);
     this.managed = custody;
     this.harvestLocked = stillLocked + gain;
     this.harvestHeight = height();
@@ -186,11 +200,13 @@ export default class ShareVault extends Contract {
   }
 
   // The part of the last harvest's lock that has not vested at the current
-  // height, rounded up so E rounds down (favoring the vault). This is at most
-  // the stored lock, and mulDivUp's product is exact, so it cannot overflow.
-  // Heights never decrease on chain; an earlier height would count as the
-  // harvest height, which still keeps the result at most the stored lock.
-  private locked(): u128 {
+  // height, L * r / D. It is rounded up for redemptions, harvest and the
+  // lockedProfit view (E rounds down) and down for deposits (E rounds up), so
+  // each favors the vault. Either result is at most the stored lock, and the
+  // products are exact, so it cannot overflow. Heights never decrease on
+  // chain; an earlier height would count as the harvest height, which still
+  // keeps the result at most the stored lock.
+  private locked(roundUp: boolean): u128 {
     const lockedAtHarvest = this.harvestLocked;
     // Zero until the first harvest that folds anything; skips the remaining
     // reads and the host call.
@@ -200,7 +216,8 @@ export default class ShareVault extends Contract {
     const now = height();
     const elapsed = now > start ? now - start : 0n;
     if (elapsed >= vesting) return 0n;
-    return mulDivUp(lockedAtHarvest, vesting - elapsed, vesting);
+    const remaining = vesting - elapsed;
+    return roundUp ? mulDivUp(lockedAtHarvest, remaining, vesting) : mulDiv(lockedAtHarvest, remaining, vesting);
   }
 
   // Shares issued for `assets` given the effective totals, rounded down
@@ -245,7 +262,7 @@ export default class ShareVault extends Contract {
     const managed = this.managed;
     const issued = this.issued;
     if (assets > this.assetRoom(managed)) return 0n;
-    const shares = this.toShares(assets, managed - this.locked(), issued);
+    const shares = this.toShares(assets, managed - this.locked(false), issued);
     return shares <= this.shareRoom(issued) ? shares : 0n;
   }
 
@@ -253,7 +270,7 @@ export default class ShareVault extends Contract {
   @view({ opcode: 13 })
   previewRedeem(shares: u128): u128 {
     const managed = this.managed;
-    return this.toAssets(shares, managed - this.locked(), this.issued);
+    return this.toAssets(shares, managed - this.locked(true), this.issued);
   }
 
   @view({ opcode: 14 })
@@ -268,7 +285,7 @@ export default class ShareVault extends Contract {
 
   // Harvested yield that has not vested yet at the current height.
   @view({ opcode: 17 })
-  lockedProfit(): u128 { return this.locked(); }
+  lockedProfit(): u128 { return this.locked(true); }
 
   @view({ opcode: 18 })
   vestingBlocks(): u128 { return this.vesting; }

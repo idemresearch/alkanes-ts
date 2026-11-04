@@ -221,6 +221,9 @@ test('AmmRouter validates routes and rolls back rejected ones',()=>{
   assert.throws(()=>vm.call({target:router,inputs:[1,...ids(A,poolAB,B,poolCB,C),0],incoming:[{id:A,value:1n}]}),/swap2 expects 12 inputs/);
   assert.throws(()=>vm.call({target:router,inputs:[2,...ids(A,poolAB,B),0],incoming:[{id:A,value:1n}]}),/swap1 expects 8 inputs/);
   assert.throws(()=>vm.call({target:router,inputs:[3]}),/Unrecognized opcode/);
+  // The deployment entrypoint: a read-only call that succeeds without assets.
+  assert.equal(u128.decode(vm.simulate({target:router,inputs:[0]}).data),1n);
+  assert.throws(()=>vm.call({target:router,inputs:[0],incoming:[{id:A,value:1n}]}),/rejects incoming assets/);
   assert.deepEqual(world(vm),before);
   assertNoCustody(vm);
 });
@@ -316,4 +319,10 @@ test('AmmRouter rejects a route after its deadline height before calling any poo
   vm.height=deadline;
   assert.equal(u128.decode(swap2(vm,10_000n,{min:out,deadline}).data),out);
   assertNoCustody(vm);
+});
+
+test('AmmRouter never reads fuel: each hop passes a constant limit and the module imports no __fuel',()=>{
+  const imports=WebAssembly.Module.imports(new WebAssembly.Module(readFileSync('dist/amm-router.wasm'))).map(i=>`${i.module}.${i.name}`);
+  assert.ok(imports.includes('env.__call'),imports.join(', '));
+  assert.ok(!imports.includes('env.__fuel'),imports.join(', '));
 });

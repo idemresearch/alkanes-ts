@@ -106,8 +106,16 @@ test('word-v1 extensions stay fail-closed and leave other contracts on their low
   ['','@view({opcode:0}) read(a:u128):u128{a=a+1n;return a;}'],
   ['','@view({opcode:0}) read(a:u128):u128{let b=a;b<<=1n;return b;}'],
   ['','@view({opcode:0}) read(a:u128):u128{return this.get(a);}@view({opcode:1}) get(a:u128):u128{return a;}'],
-  ['','@method({opcode:0,incomingAssets:"forward"}) m(id:AlkaneId):u128{return this.assets.available(id);}'],
+  // Chain-query and external-call forms outside the subset: aliased or
+  // shadowed imports, a non-literal fuel limit, and a call whose response is used.
+  ['import {height as h} from "../../sdk/index.ts";','@view({opcode:0}) read():u128{return h();}'],
+  ['import {height} from "../../sdk/index.ts";','@view({opcode:0}) read(height:u128):u128{return height;}'],
+  ['import {height} from "../../sdk/runtime.ts";','@view({opcode:0}) read():u128{const height=1n;return height;}'],
+  ['import {AlkaneId as Id} from "../../sdk/types.ts";','@view({opcode:0}) read():AlkaneId{return new Id(1n,2n);}'],
+  ['import {Cellpack,AlkaneTransferParcel} from "../../sdk/types.ts";','@method({opcode:0,incomingAssets:"forward"}) m(id:AlkaneId,f:u128):void{this.assets.call(new Cellpack(id,[1n]),new AlkaneTransferParcel(),Number(f));}'],
+  ['import {Cellpack,AlkaneTransferParcel} from "../../sdk/types.ts";','@method({opcode:0,incomingAssets:"forward"}) m(id:AlkaneId):u128{const r=this.assets.call(new Cellpack(id,[1n]),new AlkaneTransferParcel(),1000);return 0n;}'],
+  ['import {Cellpack,AlkaneTransferParcel} from "../../sdk/types.ts";','@method({opcode:0,incomingAssets:"forward"}) m(id:AlkaneId):void{this.assets.call(new Cellpack(id,[1n]),new AlkaneTransferParcel(),1.5);}'],
  ])assert.notEqual(compileContract({filename,source:source(imports,body),wordLowering:true}).manifest.lowering,'word-v1',body);
- // AmmPool's word-v1 selection is asserted by buildPair; Counter/Token by word-sdk.test.mjs.
+ // AmmPool's and the vault, treasury and router's word-v1 selection is asserted by buildPair; Counter/Token by word-sdk.test.mjs.
  assert.equal(compileContract({filename:resolve('contracts/capped-token/index.ts'),wordLowering:true}).manifest.lowering,'word-v1');
 });

@@ -43,9 +43,11 @@ import { AlkaneId, height } from "../../sdk/index.ts";
 // blocks), readyAt + grace < 2^64 + 2 * 1_051_200 < 2^128: the checked u128
 // additions in schedule and execute never overflow. The window opens at most
 // 1_051_200 blocks after the schedule and closes at most 2 * 1_051_200 blocks
-// after it, so every withdrawal becomes executable, and later expires, at a
-// height the chain will reach (unlike an unbounded delay, which could push
-// readyAt past any u64 height and lock deposits forever).
+// after it, so every withdrawal scheduled below height 2^64 - 2 * 1_051_200
+// (on any real chain) becomes executable, and later expires, at a height the
+// chain will reach. An unbounded delay could push readyAt past any u64 height
+// and lock deposits forever. One scheduled within that margin of the last u64
+// height could only be cancelled.
 //
 // The treasury never issues its own alkane, so its own ID is never a valid
 // deposit, withdrawal or authority. Its authority token is never custody
@@ -62,7 +64,14 @@ export default class TimelockTreasury extends Contract {
 
   // A delay of 0 still needs both steps but lets them share a block. A grace
   // of 1 allows execution only in the readyAt block itself.
-  @init({ opcode: 0 })
+  //
+  // The deployer proves control of the authority by presenting a unit of it.
+  // The unit goes through the same auth call as every withdrawal step and
+  // comes back with the response. An ID that cannot authenticate now is
+  // refused, so deposits are never stranded behind it. That covers a block-2
+  // ID that CREATE will never reach, and also an ID that nobody has deployed
+  // yet, which whoever deploys it first would control.
+  @init({ opcode: 0, incomingAssets: "forward" })
   initialize(authority: AlkaneId, delay: u128, grace: u128): void {
     // Deployed alkanes live only at block 2 (CREATE, clones, factories) or 4
     // (reserved IDs). Any other ID can never hold code, so no call could ever
@@ -76,6 +85,7 @@ export default class TimelockTreasury extends Contract {
     // A grace of 0 would leave an empty window: nothing could ever execute.
     assert(delay <= 1_051_200n, "DELAY_TOO_LONG");
     assert(grace >= 1n && grace <= 1_051_200n, "INVALID_GRACE");
+    this.auth.require(authority);
     this.authority = authority;
     this.delay = delay;
     this.grace = grace;

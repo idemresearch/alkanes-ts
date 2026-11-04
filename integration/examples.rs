@@ -144,7 +144,7 @@ fn benchmark_examples(){
     for((name,method),mut values)in samples{
         assert_eq!(values.len(),iterations);assert!(values.iter().all(|v|v.0==values[0].0));values.sort_by(|a,b|a.1.partial_cmp(&b.1).unwrap());
         let median=if iterations%2==0{(values[iterations/2-1].1+values[iterations/2].1)/2.0}else{values[iterations/2].1};
-        metashrew_core::println!("ALKANES_TS_BENCH {}",serde_json::json!({"variant":name,"method":method,"iterations":iterations,"fuel":values[0].0,"median_us":median}));
+        report!("ALKANES_TS_BENCH {}",serde_json::json!({"variant":name,"method":method,"iterations":iterations,"fuel":values[0].0,"median_us":median}));
     }
 }
 

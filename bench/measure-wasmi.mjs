@@ -11,8 +11,8 @@
 // host/storage surcharges; see the actual-runtime reports for those.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 
 const root = resolve(import.meta.dirname, "..");
@@ -21,6 +21,17 @@ if (!existsSync(check)) throw new Error("build the harness first: cargo build --
 
 // [contract, scenario name, calls]; calls use wasmi-check syntax.
 const AMM = ["0,2,11,2,12", "1,0@2:11=1000000+2:12=4000000"];
+// The advanced contracts call other contracts, which are the same binaries for
+// every variant: test/fixtures/test-auth.ts (mode 0, approve) as the authority
+// at 4:9001, and dist/amm-pool.wasm for the router's pools. The harness height
+// is 900,000.
+const authWasm = join(root, "build/measure-wasmi/test-auth.wasm");
+const AUTH = ["--deploy", `4:9001=${authWasm}`, "--target", "4:9001", "0,0", "--target", "2:1"];
+const VAULT = [...AUTH, "0,2,5,4,9001,100", "1,0@2:5=1000000"];
+const TREASURY = [...AUTH, "0,4,9001,0,100@4:9001=1", "1,2,5@2:5=1000"];
+const POOLS = ["--deploy", `2:10=${join(root, "dist/amm-pool.wasm")}`, "--deploy", `2:20=${join(root, "dist/amm-pool.wasm")}`,
+  "--target", "2:10", "0,2,11,2,12", "1,0@2:11=1000000+2:12=4000000",
+  "--target", "2:20", "0,2,13,2,12", "1,0@2:13=3000000+2:12=2000000", "--target", "2:1"];
 export const SCENARIOS = [
   ["counter", "initialize", ["0"]],
   ["counter", "increment", ["0", "1,5"]],
@@ -39,6 +50,7 @@ export const SCENARIOS = [
   ["capped-token", "supply view", ["0,4,9001,1000", "101"]],
   ["capped-token", "authority view", ["0,4,9001,1000", "102"]],
   ["capped-token", "cap view", ["0,4,9001,1000", "103"]],
+  ["capped-token", "mint (auth)", [...AUTH, "0,4,9001,1000", "77,5@4:9001=1"]],
   ["capped-token", "__meta", ["--meta"]],
   ["amm-pool", "initialize", AMM.slice(0, 1)],
   ["amm-pool", "first addLiquidity", AMM],
@@ -49,7 +61,42 @@ export const SCENARIOS = [
   ["amm-pool", "reserve view", [...AMM, "20"]],
   ["amm-pool", "quote view", [...AMM, "10,10000"]],
   ["amm-pool", "__meta", ["--meta"]],
+  ["share-vault", "initialize", [...AUTH, VAULT[AUTH.length]]],
+  ["share-vault", "first deposit", VAULT],
+  ["share-vault", "second deposit", [...VAULT, "1,0@2:5=500000"]],
+  ["share-vault", "redeem", [...VAULT, "2,0@2:1=400000000"]],
+  ["share-vault", "harvest (auth + yield)", [...VAULT, "3@4:9001=1+2:5=5000"]],
+  ["share-vault", "deposit while vesting", [...VAULT, "3@4:9001=1+2:5=5000", "1,0@2:5=1000"]],
+  ["share-vault", "previewDeposit view", [...VAULT, "12,1000"]],
+  ["share-vault", "lockedProfit view", [...VAULT, "3@4:9001=1+2:5=5000", "17"]],
+  ["share-vault", "__meta", ["--meta"]],
+  ["timelock-treasury", "initialize", [...AUTH, TREASURY[AUTH.length]]],
+  ["timelock-treasury", "deposit", TREASURY],
+  ["timelock-treasury", "schedule (auth)", [...TREASURY, "2,2,5,400@4:9001=1"]],
+  ["timelock-treasury", "execute (auth + payout)", [...TREASURY, "2,2,5,400@4:9001=1", "3@4:9001=1"]],
+  ["timelock-treasury", "cancel (auth)", [...TREASURY, "2,2,5,400@4:9001=1", "4@4:9001=1"]],
+  ["timelock-treasury", "pending asset view", [...TREASURY, "2,2,5,400@4:9001=1", "10"]],
+  ["timelock-treasury", "held view", [...TREASURY, "13,2,5"]],
+  ["timelock-treasury", "__meta", ["--meta"]],
+  ["amm-router", "version view", ["0"]],
+  ["amm-router", "swap1 (one pool)", [...POOLS, "2,2,11,2,10,2,12,0,1000000000@2:11=10000"]],
+  ["amm-router", "swap2 (two pools)", [...POOLS, "1,2,11,2,10,2,12,2,20,2,13,0,1000000000@2:11=10000"]],
+  ["amm-router", "swap1 slippage revert", [...POOLS, "2,2,11,2,10,2,12,1000000000,1000000000@2:11=10000"]],
+  ["amm-router", "__meta", ["--meta"]],
 ];
+
+// Builds the authority fixture the vault and treasury scenarios deploy.
+async function ensureFixtures() {
+  if (existsSync(authWasm)) return;
+  const { buildLibrary } = await import("../scripts/build.mjs");
+  const work = dirname(authWasm), source = join(root, "test/fixtures/test-auth.ts"), entry = join(work, "entry.ts");
+  mkdirSync(work, { recursive: true });
+  writeFileSync(entry, `import contract from ${JSON.stringify(source)};
+import {executeContract,contractMeta} from ${JSON.stringify(join(root, "sdk/contract.ts"))};
+export function execute(context:Uint8Array):Uint8Array{return executeContract(contract,context);}
+export function meta():Uint8Array{return contractMeta(contract);}`);
+  buildLibrary({ entry, work, out: authWasm });
+}
 
 function codeBytes(bytes) {
   let p = 8, code = 0;
@@ -59,8 +106,10 @@ function codeBytes(bytes) {
 }
 
 function run(wasm, calls) {
-  const out = execFileSync(check, [wasm, ...calls], { encoding: "utf8" }).trim().split("\n").slice(1);
-  if (out.length !== calls.length) throw new Error(`${wasm}: expected ${calls.length} results`);
+  // One result line per call or --meta; --deploy/--target and their values are setup.
+  const count = calls.filter((c, i) => c !== "--deploy" && c !== "--target" && !["--deploy", "--target"].includes(calls[i - 1])).length;
+  const out = execFileSync(check, [wasm, ...calls], { encoding: "utf8" }).trim().split("\n").filter((l) => /fuel=\d+/.test(l));
+  if (out.length !== count) throw new Error(`${wasm}: expected ${count} results`);
   const last = out.at(-1);
   const fuel = Number(/fuel=(\d+)/.exec(last)[1]);
   // Strip fuel so the remaining text is the observable result.
@@ -114,6 +163,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename
     else { const [label, dir] = a.split("="); variants.push({ label, dir: resolve(dir) }); }
   }
   if (!variants.length) throw new Error("usage: measure-wasmi.mjs [--output FILE] label=dir ...");
+  await ensureFixtures();
   const md = report(measure(variants), variants);
   if (output) writeFileSync(output, md); else process.stdout.write(md);
 }

@@ -14,6 +14,7 @@ HOST("__call") int call(N, N, N, L);
 HOST("__returndatacopy") void returndata(N);
 HOST("abort") void abort_call(N, N, N, N);
 HOST("__balance") void host_balance(N, N, N);
+HOST("__height") void host_height(N);
 
 void *memcpy(void *to, const void *from, N n) {
   unsigned char *d = to;
@@ -523,6 +524,44 @@ static N checkpoint(Context *c) {
     }
   return p;
 }
+// One EXTCALL_CALL with sdk/runtime.ts extcall semantics, after the caller
+// has debited the parcel from the ledger. Returns the response (transfer
+// count, transfers, data) with its assets credited, or 0 with the same error
+// as the bigint backend latched: a revert carrying the revert selector and a
+// message reports "Extcall failed: <message>", any other revert "Extcall
+// failed (no details available)". Precompiles (block 800000000) take no
+// checkpoint and commit nothing, so the buffered writes stay valid; any other
+// call committed them and may have changed storage through a callback.
+static N host_call(Context *c, N cp, N parcel, L budget) {
+  int result = call(cp, parcel, checkpoint(c), budget);
+  N n = result < 0 ? (N)(-(long long)result) : (N)result;
+  if (n < 16) {
+    error(c, 10);
+    return 0;
+  }
+  N returned = reserve(n);
+  returndata(returned);
+  U transfers = get(returned);
+  if (transfers > (n - 16) / 48) {
+    error(c, 10);
+    return 0;
+  }
+  if (result < 0) {
+    N data = returned + 16 + (N)transfers * 48, dlen = n - 16 - (N)transfers * 48;
+    error(c, 10);
+    if (dlen > 4 && ((unsigned char *)data)[0] == 8 && ((unsigned char *)data)[1] == 195 &&
+        ((unsigned char *)data)[2] == 121 && ((unsigned char *)data)[3] == 160) {
+      c->code = 11;
+      c->tail = data + 4;
+      c->tlen = dlen - 4;
+    }
+    return 0;
+  }
+  if (get(cp) != (U)800000000)
+    c->storage = 0;
+  credit(c, returned + 16, (N)transfers);
+  return returned;
+}
 EXPORT("w_mint") void mint(Context *c, N amount) {
   if (!writable(c))
     return;
@@ -564,32 +603,11 @@ EXPORT("w_auth") void auth(Context *c, N b, N t) {
   put(parcel + 32, tx);
   put(parcel + 48, 1);
   a->value--;
-  int result = call(cp, parcel, checkpoint(c), f);
-  N n = result < 0 ? (N)(-(long long)result) : (N)result;
-  if (n < 16) {
-    error(c, 10);
+  N returned = host_call(c, cp, parcel, f);
+  if (!returned)
     return;
-  }
-  N returned = reserve(n);
-  returndata(returned);
-  U transfers = get(returned);
-  if (transfers > (n - 16) / 48) {
-    error(c, 10);
-    return;
-  }
-  N data = returned + 16 + (N)transfers * 48, dlen = n - 16 - (N)transfers * 48;
-  if (result < 0) {
-    error(c, 11);
-    if (dlen >= 4 && ((unsigned char *)data)[0] == 8 && ((unsigned char *)data)[1] == 195 &&
-        ((unsigned char *)data)[2] == 121 && ((unsigned char *)data)[3] == 160) {
-      c->tail = data + 4;
-      c->tlen = dlen - 4;
-    }
-    return;
-  }
-  c->storage = 0;
-  credit(c, returned + 16, (N)transfers);
-  if (dlen != 1 || *(unsigned char *)data != 1)
+  N data = returned + 16 + (N)get(returned) * 48;
+  if (get32(returned - 4) - (data - returned) != 1 || *(unsigned char *)data != 1)
     error(c, 8);
 }
 EXPORT("w_finish") N finish(Context *c, N value, N len, N message, N mlen) {
@@ -769,5 +787,98 @@ EXPORT("w_custody") N custody(Context *c, N kind, N b, N t, N amount) {
   }
   Asset *a = asset(c, block, tx);
   a->value = add(c, a->value, value);
+  return 0;
+}
+
+/* ---- Chain queries, ledger reads and external calls (word-v1 vault,
+ * treasury and router subset). They are separate leaves so the ones above,
+ * and every contract that does not use these features, stay unchanged.
+ * Error 18 is PRECOMPILE_TAKES_NO_ASSETS. */
+// Kinds: 0 height() (the host's u64, zero-extended like bytesToU128),
+// 1 available(id) (this invocation's ledger amount; never inserts).
+EXPORT("w_query") N word_query(Context *c, N kind, N b, N t) {
+  if (c->code)
+    return 0;
+  if (kind == 0) {
+    N out = reserve(16);
+    memset((void *)out, 0, 16);
+    host_height(out);
+    N n = get32(out - 4);
+    unsigned char bytes[16];
+    for (N i = 0; i < 16; i++)
+      bytes[i] = i < n ? ((unsigned char *)out)[i] : 0;
+    U v;
+    __builtin_memcpy(&v, bytes, 16);
+    return word(v);
+  }
+  if (kind == 1) {
+    Asset *a = ledger_find(c, get(b), get(t));
+    return word(a ? a->value : 0);
+  }
+  error(c, 1);
+  return 0;
+}
+// this.assets.call(new Cellpack(target, [inputs]), parcel, fuel) as a
+// statement. The compiler evaluates every argument first, in source order,
+// then fills a builder [cellpack, parcel, next input, next transfer]:
+// kind 0 creates it (a, b: target words, d: inputs | transfers << 16),
+// 1 appends an input (a), 2 a transfer (a, b: id words, d: amount), and
+// 3 invokes it with fuel word a, following sdk/assets.ts Assets.call.
+EXPORT("w_extcall") N word_extcall(Context *c, N kind, N p, N a, N b, N d) {
+  if (c->code)
+    return 0;
+  if (kind == 0) {
+    N inputs = d & 0xffff, transfers = d >> 16, builder = reserve(16), cp = reserve(32 + inputs * 16),
+      parcel = reserve(16 + transfers * 48);
+    put(cp, get(a));
+    put(cp + 16, get(b));
+    put(parcel, transfers);
+    put32(builder, cp);
+    put32(builder + 4, parcel);
+    put32(builder + 8, cp + 32);
+    put32(builder + 12, parcel + 16);
+    return builder;
+  }
+  if (kind == 1) {
+    N o = get32(p + 8);
+    put(o, get(a));
+    put32(p + 8, o + 16);
+    return 0;
+  }
+  if (kind == 2) {
+    N o = get32(p + 12);
+    put(o, get(a));
+    put(o + 16, get(b));
+    put(o + 32, get(d));
+    put32(p + 12, o + 48);
+    return 0;
+  }
+  if (kind != 3) {
+    error(c, 1);
+    return 0;
+  }
+  if (!writable(c))
+    return 0;
+  N cp = get32(p), parcel = get32(p + 4), count = (N)get(parcel);
+  // The host never moves assets for a precompile call, so the ledger debit
+  // below would silently turn them into custody.
+  if (get(cp) == (U)800000000 && count) {
+    error(c, 18);
+    return 0;
+  }
+  // Each transfer leaves the ledger in parcel order; an absent asset is
+  // inserted at the end, like the bigint ledger's Map.
+  for (N i = 0; i < count; i++) {
+    N q = parcel + 16 + i * 48;
+    U block = get(q), tx = get(q + 16), value = get(q + 32);
+    Asset *e = ledger_find(c, block, tx);
+    U have = e ? e->value : 0;
+    if (have < value) {
+      error(c, 3);
+      return 0;
+    }
+    asset(c, block, tx)->value = have - value;
+  }
+  host_call(c, cp, parcel, (L)get(a));
   return 0;
 }

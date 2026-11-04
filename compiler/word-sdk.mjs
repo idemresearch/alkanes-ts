@@ -22,6 +22,13 @@ export function lowerSDK({filename,source,abi,sdkDirectory}){
     const isBigType=t=>!!(t.flags&ts.TypeFlags.BigIntLike)||(t.isIntersection()&&t.types.some(isBigType));
     const big=n=>isBigType(checker.getTypeAtLocation(n));
     const string=n=>!!(checker.getTypeAtLocation(n).flags&ts.TypeFlags.StringLike);
+    // Values that may be a word handle or Bytes object without being typed exactly
+    // bigint/string (unions, optionals, type parameters, any/unknown). Equality,
+    // switch and truthiness on them would compare handles/objects, not values.
+    const holds=t=>!!(t.flags&(ts.TypeFlags.BigIntLike|ts.TypeFlags.StringLike|ts.TypeFlags.Any|ts.TypeFlags.Unknown))||
+      (t.isUnionOrIntersection()&&t.types.some(holds))||
+      (!!(t.flags&ts.TypeFlags.TypeParameter)&&(c=>!c||c===t||holds(c))(checker.getBaseConstraintOfType(t)));
+    const opaque=n=>!big(n)&&!string(n)&&holds(checker.getTypeAtLocation(n));
     const pathFor=node=>resolve(dirname(filename),node.moduleSpecifier.text);
     for(const node of file.statements){
       if(ts.isImportDeclaration(node)){
@@ -62,9 +69,12 @@ export function lowerSDK({filename,source,abi,sdkDirectory}){
         if(['&&','||'].includes(op)&&(big(node.left)||big(node.right)||string(node.left)||string(node.right)))no();
       }
       const condition=ts.isIfStatement(node)||ts.isWhileStatement(node)||ts.isDoStatement(node)||ts.isConditionalExpression(node)?node.expression??node.condition:ts.isForStatement(node)?node.condition:null;
-      if(condition&&(big(condition)||string(condition)))no();
+      if(condition&&(big(condition)||string(condition)||opaque(condition)))no();
+      if(ts.isBinaryExpression(node)&&['===','!==','==','!='].includes(node.operatorToken.getText(file))&&(opaque(node.left)||opaque(node.right)))no();
+      if(ts.isPrefixUnaryExpression(node)&&node.operator===ts.SyntaxKind.ExclamationToken&&opaque(node.operand))no();
+      if(ts.isCaseClause(node)&&(big(node.expression)||string(node.expression)||opaque(node.expression)))no();
       if((ts.isPrefixUnaryExpression(node)||ts.isPostfixUnaryExpression(node))&&(big(node.operand)||string(node.operand)))no();
-      if(ts.isSwitchStatement(node)&&(big(node.expression)||string(node.expression)))no();
+      if(ts.isSwitchStatement(node)&&(big(node.expression)||string(node.expression)||opaque(node.expression)))no();
       if(ts.isNewExpression(node)){
         const name=node.expression.getText(file);
         if(name==='Uint8Array'){if(node.arguments?.length!==1||!ts.isArrayLiteralExpression(node.arguments[0])||node.arguments[0].elements.some(e=>!ts.isNumericLiteral(e)))no();}
