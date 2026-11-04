@@ -2,7 +2,10 @@
 // Builds contracts/<name>/index.ts into an alkanes contract at dist/<name>.wasm.
 //
 //   1. Generate an entry module exposing execute(context) and meta().
-//   2. Compile it with scriptc as a wasm32-wasi library (reactor).
+//   2. Compile it with scriptc as a wasm32-wasi library (reactor). The link
+//      goes through scripts/link.mjs, which replaces libc's vsnprintf and
+//      snprintf with shim/printf.c when every format they can receive is
+//      one it implements.
 //   3. wasm-merge it with shim/adapter.wat (alkanes ABI <-> scriptc callbacks)
 //      and shim/wasi.wat (deterministic WASI stand-ins).
 //   4. Strip every export except memory/__execute/__meta and optimize, keeping
@@ -11,7 +14,7 @@
 //      the form alkanes deployment envelopes carry.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { gzipSync } from "node:zlib";
@@ -19,6 +22,7 @@ import { compileContract } from "../compiler/index.mjs";
 import { generateClient } from "../compiler/client.mjs";
 import { wordCallbacks, sdkCallbacks, wordAdapter } from "../compiler/word-abi.mjs";
 import { snapshotModule, SnapshotRefused } from "./snapshot.mjs";
+import { stripCustomSections } from "./printf-formats.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const bin = (name) => join(root, "node_modules", ".bin", name);
@@ -56,7 +60,32 @@ function run(cmd, args, env = process.env) {
   }
 }
 
-function buildContract(name, { snapshot = true } = {}) {
+// shim/printf.c replaces libc's vsnprintf/snprintf at scriptc's link step,
+// through the scripts/link.mjs SCRIPTC_LINKER wrapper, wherever every format
+// it can receive is one it implements. Compiled once per process; the rename
+// keeps concurrent builds (parallel test files) from reading a partial file.
+let printfObject = null;
+export function minimalPrintfObject() {
+  if (printfObject) return printfObject;
+  const object = join(root, "build", "shim", "printf.o");
+  const partial = `${object}.${process.pid}`;
+  mkdirSync(dirname(object), { recursive: true });
+  run("zig", ["cc", "--target=wasm32-wasi", "-Oz", "-c", join(root, "shim", "printf.c"), "-o", partial]);
+  renameSync(partial, object);
+  return (printfObject = object);
+}
+
+function linkerEnvironment(report) {
+  const linker = join(root, "scripts", "link.mjs");
+  try {
+    accessSync(linker, constants.X_OK);
+  } catch {
+    chmodSync(linker, 0o755); // scriptc executes SCRIPTC_LINKER directly
+  }
+  return { SCRIPTC_LINKER: linker, ALKANES_LINK_OBJECTS: minimalPrintfObject(), ALKANES_LINK_REPORT: report };
+}
+
+function buildContract(name, { snapshot = true, printf = "minimal" } = {}) {
   const source = join(root, "contracts", name, "index.ts");
   if (!existsSync(source)) throw new Error(`no contract at ${relative(root, source)}`);
   const work = join(root, "build", name);
@@ -87,13 +116,14 @@ export function meta(): Uint8Array {
 `,
   );
 
-  buildLibrary({ entry, work, out: join(root, "dist", `${name}.wasm`), word: compiled?.word, snapshot });
+  buildLibrary({ entry, work, out: join(root, "dist", `${name}.wasm`), word: compiled?.word, snapshot, printf });
 }
 
 // The isolation fixtures use the production linker/optimizer, with additional
 // scalar exports and a benchmark-only hook into the adapter's init guard.
 export function buildLibrary({ entry, work, out, extraExports = [], benchmark = false,
-  compiler = bin("scriptc"), runtimePack, word = false, snapshot = true }) {
+  compiler = bin("scriptc"), runtimePack, word = false, snapshot = true, printf = "minimal" }) {
+  if (printf !== "minimal" && printf !== "libc") throw new Error(`unknown printf option ${printf}`);
   let snapshotInfo = null;
   mkdirSync(work, { recursive: true });
   mkdirSync(dirname(out), { recursive: true });
@@ -125,11 +155,23 @@ export function buildLibrary({ entry, work, out, extraExports = [], benchmark = 
   );
 
   const compiled = join(work, "contract.wasm");
+  const printfReport = join(work, "printf-formats.json");
+  rmSync(printfReport, { force: true });
   run(compiler, ["build", "--lib", "--profile", profile, "-o", compiled], {
     ...process.env,
     SCRIPTC_TARGET: "wasm32-wasi",
     ...(runtimePack ? { SCRIPTC_RUNTIME_PACK: runtimePack } : {}),
+    ...(printf === "minimal" ? linkerEnvironment(printfReport) : {}),
   });
+  let linkedPrintf = "libc";
+  if (printf === "minimal") {
+    // The wrapper kept the name section for its format check; the rest of
+    // the pipeline sees the module wasm-ld writes with --strip-debug.
+    const report = JSON.parse(readFileSync(printfReport, "utf8"));
+    linkedPrintf = report.printf;
+    if (linkedPrintf !== "minimal") console.log(`${relative(root, out)}: libc printf kept (${report.reason})`);
+    writeFileSync(compiled, stripCustomSections(readFileSync(compiled)));
+  }
 
   const adapter = join(work, "adapter.wasm");
   const wasi = join(work, "wasi.wasm");
@@ -212,14 +254,16 @@ export function buildLibrary({ entry, work, out, extraExports = [], benchmark = 
   writeFileSync(`${out}.gz`, compressed);
   console.log(`${relative(root, out)}  ${bytes.length} bytes (${compressed.length} gzipped)` +
     (snapshotInfo ? `, initialized snapshot ${snapshotInfo.dataBytes} data bytes` : ""));
-  return { bytes: bytes.length, gzipped: compressed.length, snapshot: snapshotInfo };
+  return { bytes: bytes.length, gzipped: compressed.length, snapshot: snapshotInfo, printf: linkedPrintf };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  // --no-snapshot keeps per-call initialization, for A/B measurements.
+  // --no-snapshot keeps per-call initialization and --libc-printf links
+  // libc's vsnprintf/snprintf, for A/B measurements.
   const args = process.argv.slice(2);
   const snapshot = !args.includes("--no-snapshot");
+  const printf = args.includes("--libc-printf") ? "libc" : "minimal";
   const names = args.filter((a) => !a.startsWith("--"));
   const targets = names.length > 0 ? names : readdirSync(join(root, "contracts"));
-  for (const name of targets) buildContract(name, { snapshot });
+  for (const name of targets) buildContract(name, { snapshot, printf });
 }
