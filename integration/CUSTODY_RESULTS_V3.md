@@ -16,7 +16,7 @@ test native_words_preserve_wide_values_checked_operations_and_self_auth ... ok
 test initialization_reentry_is_blocked ... ok
 test initialization_and_numeric_boundaries ... ok
 test authentication_failures_and_reentry ... ok
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 filtered out; finished in 133.82s
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 filtered out; finished in 142.46s
 ```
 
 Covered: generated-client CREATE+init bytes; typed ID state; initialization gates and atomic deployment failure; actual upstream auth verification and returned assets; cap/max-u128 boundaries; failed-auth and post-auth rollback; auth and initializer reentry; callback cache invalidation; outgoing Bitcoin UTXO balances; complete TS/Rust response and storage parity. Additional Counter/Token coverage: checked wide increments/mints, numeric loops, storage fill, height, metadata responses, caller ownership, real UTXO balances and nested-call rollback. Custody coverage, with real UTXO balances and custody read from the indexer balance table: AmmPool deposits, swaps and redemptions; AmmRouter two-hop routes and slippage rollback; ShareVault deposits, an authenticated harvest with linear vesting, and redemption; TimelockTreasury deposits, authenticated scheduling, execution inside the window, expiry, replacement and cancellation. ShareVault and TimelockTreasury authenticate with the upstream auth token.
@@ -25,21 +25,21 @@ Custody calls (one run each; fuel includes nested calls and host/storage charges
 
 | scenario | fuel | µs |
 |---|---:|---:|
-| timelock-treasury deploy+initialize | 16112 | 52360.8 |
-| timelock-treasury deposit | 9961 | 15469.5 |
-| timelock-treasury schedule (real auth) | 92266 | 89772.7 |
-| timelock-treasury execute (real auth + payout) | 88570 | 30604.4 |
-| timelock-treasury cancel (real auth) | 86045 | 29658.1 |
-| share-vault deploy+initialize | 14873 | 13147.6 |
-| share-vault first deposit | 17453 | 13636.1 |
-| share-vault harvest (real auth + yield) | 94144 | 28573.8 |
-| share-vault redeem | 18829 | 12898.9 |
-| amm-router swap2 (two pools) | 51474 | 36053.7 |
-| amm-pool deploy+initialize | 12747 | 21171.5 |
-| amm-pool first addLiquidity | 21471 | 20711.5 |
-| amm-pool quote view | 7477 | 13397.7 |
-| amm-pool swap | 19251 | 13533.7 |
-| amm-pool removeLiquidity | 21964 | 13366.3 |
+| timelock-treasury deploy+initialize (real auth) | 91835 | 134632.1 |
+| timelock-treasury deposit | 9965 | 17550.3 |
+| timelock-treasury schedule (real auth) | 92276 | 61309.2 |
+| timelock-treasury execute (real auth + payout) | 88576 | 31058.6 |
+| timelock-treasury cancel (real auth) | 86051 | 32114.0 |
+| share-vault deploy+initialize | 14873 | 19467.3 |
+| share-vault first deposit | 17445 | 18927.8 |
+| share-vault harvest (real auth + yield) | 94136 | 40204.3 |
+| share-vault redeem | 18821 | 14947.1 |
+| amm-router swap2 (two pools) | 51474 | 41443.5 |
+| amm-pool deploy+initialize | 12747 | 13614.2 |
+| amm-pool first addLiquidity | 21471 | 20434.5 |
+| amm-pool quote view | 7477 | 16314.1 |
+| amm-pool swap | 19251 | 18305.4 |
+| amm-pool removeLiquidity | 21964 | 18287.6 |
 
 ```json
 {
@@ -132,12 +132,12 @@ Custody calls (one run each; fuel includes nested calls and host/storage charges
       "sha256": "0d2ab3730f18550d6fa5bd30dda566cc3cf387fa683c1839df238f1f76b60f20"
     },
     "share-vault.wasm": {
-      "bytes": 90704,
-      "sha256": "d03dd1bb541841f7b98bb7a63a47be72b39b5c7c0610ee5e1d5d52b8d879cf8b"
+      "bytes": 90795,
+      "sha256": "7cb762252de12fb33d7d89f805cc4ed7f9dddbb9f93ba29eef3d1b0e486a44ae"
     },
     "timelock-treasury.wasm": {
-      "bytes": 83029,
-      "sha256": "6dca9bd00e3b3c395f4431c147823f71ce073570d98ebd196d89ce84221d0b5d"
+      "bytes": 83114,
+      "sha256": "75fec120bd3e381e9826835aaef7875ce16e7262071d97473edc2e4417bae644"
     }
   }
 }

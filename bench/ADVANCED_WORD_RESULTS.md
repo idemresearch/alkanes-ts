@@ -4,19 +4,21 @@ ShareVault, TimelockTreasury and AmmRouter used to fall back to the general bigi
 
 Instruction fuel comes from the in-repo wasmi 0.37.2 host model (`node bench/measure-wasmi.mjs`). Each row is the fuel of a scenario's last call. The script fails if the two builds' observable results differ in any way: response data, transfers, reverts or logs.
 
-Fuel excludes canonical host and storage surcharges. Auth calls include the callee: the authority is the TypeScript test fixture `test/fixtures/test-auth.ts`, which runs on the bigint backend and accounts for most of those rows. The router's swaps include the AmmPool calls, which are the same `dist/amm-pool.wasm` in both columns.
+Fuel excludes canonical host and storage surcharges. Auth calls include the callee: the authority is the TypeScript test fixture `test/fixtures/test-auth.ts`, which runs on the bigint backend and accounts for most of those rows. The treasury's initializer authenticates as well. The router's swaps include the AmmPool calls, which are the same `dist/amm-pool.wasm` in both columns.
 
-- **bigint:** the previous builds, with contract sources as of commit `a20fbe7`.
-- **word:** this change.
+- **before:**
+  - ShareVault, TimelockTreasury and AmmRouter built from the same sources with the general bigint backend (`compileContract({ wordLowering: false })`, as `test/differential.mjs` does);
+  - Counter, Token, CappedToken and AmmPool as built before the new leaves, with contract sources as of commit `a20fbe7`.
+- **after:** `npm run build`.
 
-Counter, Token, CappedToken and AmmPool are controls:
+The four controls show that the new leaves leave other contracts alone:
 
 - Counter, Token and AmmPool changed only in code layout. They keep the same sizes and use the same fuel.
 - CappedToken's auth now goes through the shared host-call path, which costs 23 more fuel per mint and 91 more bytes.
 
-Reproduce with `npm run build`, then `node bench/measure-wasmi.mjs bigint=<previous dist> word=dist`.
+Reproduce: run `npm run build`, build the three contracts with `wordLowering: false`, then run `node bench/measure-wasmi.mjs before=<dir> after=dist`.
 
-| contract | scenario | bigint | word | word vs bigint |
+| contract | scenario | before | after | after vs before |
 |---|---|---:|---:|---:|
 | counter | initialize | 4761 | 4761 | 0% |
 | counter | increment | 5749 | 5749 | 0% |
@@ -47,21 +49,21 @@ Reproduce with `npm run build`, then `node bench/measure-wasmi.mjs bigint=<previ
 | amm-pool | quote view | 6089 | 6089 | 0% |
 | amm-pool | __meta | 1425 | 1425 | 0% |
 | share-vault | initialize | 71337 | 6864 | -90.4% |
-| share-vault | first deposit | 98165 | 11480 | -88.3% |
-| share-vault | second deposit | 104026 | 11469 | -89.0% |
-| share-vault | redeem | 113563 | 10766 | -90.5% |
-| share-vault | harvest (auth + yield) | 229794 | 57190 | -75.1% |
-| share-vault | deposit while vesting | 121662 | 13845 | -88.6% |
-| share-vault | previewDeposit view | 52808 | 7516 | -85.8% |
-| share-vault | lockedProfit view | 54891 | 6409 | -88.3% |
+| share-vault | first deposit | 98185 | 11472 | -88.3% |
+| share-vault | second deposit | 104046 | 11461 | -89.0% |
+| share-vault | redeem | 113583 | 10758 | -90.5% |
+| share-vault | harvest (auth + yield) | 229814 | 57182 | -75.1% |
+| share-vault | deposit while vesting | 121247 | 13886 | -88.5% |
+| share-vault | previewDeposit view | 52828 | 7508 | -85.8% |
+| share-vault | lockedProfit view | 55067 | 6463 | -88.3% |
 | share-vault | __meta | 2649 | 1427 | -46.1% |
-| timelock-treasury | initialize | 75378 | 6893 | -90.9% |
-| timelock-treasury | deposit | 65226 | 6555 | -90.0% |
-| timelock-treasury | schedule (auth) | 197012 | 55252 | -72.0% |
-| timelock-treasury | execute (auth + payout) | 213853 | 56540 | -73.6% |
-| timelock-treasury | cancel (auth) | 166355 | 53975 | -67.6% |
-| timelock-treasury | pending asset view | 44825 | 4516 | -89.9% |
-| timelock-treasury | held view | 52235 | 4115 | -92.1% |
+| timelock-treasury | initialize | 184639 | 53841 | -70.8% |
+| timelock-treasury | deposit | 65239 | 6559 | -89.9% |
+| timelock-treasury | schedule (auth) | 198783 | 57020 | -71.3% |
+| timelock-treasury | execute (auth + payout) | 213866 | 56546 | -73.6% |
+| timelock-treasury | cancel (auth) | 166368 | 53981 | -67.6% |
+| timelock-treasury | pending asset view | 44838 | 4516 | -89.9% |
+| timelock-treasury | held view | 52248 | 4115 | -92.1% |
 | timelock-treasury | __meta | 2647 | 1426 | -46.1% |
 | amm-router | version view | 27466 | 2560 | -90.7% |
 | amm-router | swap1 (one pool) | 123613 | 20704 | -83.3% |
@@ -71,17 +73,17 @@ Reproduce with `npm run build`, then `node bench/measure-wasmi.mjs bigint=<previ
 
 | contract | variant | bytes | gzip | code section | SHA-256 |
 |---|---|---:|---:|---:|---|
-| counter | bigint | 85430 | 41013 | 56059 | `46154531f68c961babf5161d289b6014987d8947086e49703edc48df1cf939de` |
-| counter | word | 85430 | 41012 | 56059 | `3ecfb0778db50f40437052c4879656cee5e141bbfecb1d70329a0b50f0f53b26` |
-| token | bigint | 93286 | 44144 | 64383 | `53b0076e9eb057e5f2a2be12badc717e76dda267159bbbf497eb4133d375b238` |
-| token | word | 93286 | 44144 | 64383 | `531c00bcfb73a3bd2a6a988a328fb927f59416b8b0eb7629a366630d011381f5` |
-| capped-token | bigint | 70364 | 35662 | 44898 | `828b2422dad7c8283e9adf84396af93e17259324d8e4a5c12887adc496338e1d` |
-| capped-token | word | 70455 | 35731 | 44989 | `c97f2497534b5d6c4339535f605a5a68531ad5706b6fdac99ddc4c8ea1284d9e` |
-| amm-pool | bigint | 86094 | 40296 | 58083 | `8cc73b9c1c1fb752c186ff0c3fffddffc85b2c4292a7fa752808e15cce08192d` |
-| amm-pool | word | 86094 | 40296 | 58083 | `8df6cccf1c25fce20de0c9b2a7958b91bf96190f0849fc4c132c31bb3601be5a` |
-| share-vault | bigint | 342989 | 141648 | 292488 | `ffdf9ec460e1e805f5156915e925012612a58a9a31ea5617612421363e276f25` |
-| share-vault | word | 90704 | 41984 | 61923 | `d03dd1bb541841f7b98bb7a63a47be72b39b5c7c0610ee5e1d5d52b8d879cf8b` |
-| timelock-treasury | bigint | 337413 | 140343 | 287250 | `e943da7699d576e35be24a45b2ad5e291788cd3a9ef0b2cbaab979b36f5f8e4b` |
-| timelock-treasury | word | 83029 | 38859 | 54417 | `6dca9bd00e3b3c395f4431c147823f71ce073570d98ebd196d89ce84221d0b5d` |
-| amm-router | bigint | 321937 | 136268 | 275051 | `9509f4df9d4c86727c1945865b5f42593e4d51dacd4b0451ee3e164670b0d290` |
-| amm-router | word | 71417 | 36378 | 46334 | `0d2ab3730f18550d6fa5bd30dda566cc3cf387fa683c1839df238f1f76b60f20` |
+| counter | before | 85430 | 41013 | 56059 | `46154531f68c961babf5161d289b6014987d8947086e49703edc48df1cf939de` |
+| counter | after | 85430 | 41012 | 56059 | `3ecfb0778db50f40437052c4879656cee5e141bbfecb1d70329a0b50f0f53b26` |
+| token | before | 93286 | 44144 | 64383 | `53b0076e9eb057e5f2a2be12badc717e76dda267159bbbf497eb4133d375b238` |
+| token | after | 93286 | 44144 | 64383 | `531c00bcfb73a3bd2a6a988a328fb927f59416b8b0eb7629a366630d011381f5` |
+| capped-token | before | 70364 | 35662 | 44898 | `828b2422dad7c8283e9adf84396af93e17259324d8e4a5c12887adc496338e1d` |
+| capped-token | after | 70455 | 35731 | 44989 | `c97f2497534b5d6c4339535f605a5a68531ad5706b6fdac99ddc4c8ea1284d9e` |
+| amm-pool | before | 86094 | 40296 | 58083 | `8cc73b9c1c1fb752c186ff0c3fffddffc85b2c4292a7fa752808e15cce08192d` |
+| amm-pool | after | 86094 | 40296 | 58083 | `8df6cccf1c25fce20de0c9b2a7958b91bf96190f0849fc4c132c31bb3601be5a` |
+| share-vault | before | 343126 | 141808 | 292625 | `810b861ae027592256d2dcd10b8c96a5d5924f0980636da0ccd377093c85cde0` |
+| share-vault | after | 90795 | 42008 | 61997 | `7cb762252de12fb33d7d89f805cc4ed7f9dddbb9f93ba29eef3d1b0e486a44ae` |
+| timelock-treasury | before | 337535 | 140100 | 287372 | `fe1e4722064fd87b43d12d2aea2aa02a4bd42855e839b86f908272466a986e60` |
+| timelock-treasury | after | 83114 | 38918 | 54503 | `75fec120bd3e381e9826835aaef7875ce16e7262071d97473edc2e4417bae644` |
+| amm-router | before | 321937 | 136268 | 275051 | `9509f4df9d4c86727c1945865b5f42593e4d51dacd4b0451ee3e164670b0d290` |
+| amm-router | after | 71417 | 36378 | 46334 | `0d2ab3730f18550d6fa5bd30dda566cc3cf387fa683c1839df238f1f76b60f20` |

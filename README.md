@@ -145,7 +145,7 @@ To add a contract, create `contracts/<name>/index.ts` with a default-exported `C
   - AmmPool deposits, swaps and redemptions, and AmmRouter two-hop routes;
   - ShareVault and TimelockTreasury authenticated with the upstream auth token, including vesting, the withdrawal window and expiry.
 
-  On v3.0.0-rc.4, a vault deposit costs 17,453 fuel, a pool swap 19,251 and a two-pool route 51,474 ([record](integration/CUSTODY_RESULTS_V3.md)). `delegatecall`/`staticcall` still need canonical-runtime integration coverage. The JS VM and wasmi harness now follow canonical balance movement (credit, debit, self-mint, per-entry transfers) and the 8e8 precompiles, but the custody contracts have not yet run on the canonical indexer. Production RPC/wallet/PSBT adapters and a live Bitcoin-node deployment remain follow-up work.
+  On v3.0.0-rc.4, a vault deposit costs 17,445 fuel, a pool swap 19,251 and a two-pool route 51,474 ([record](integration/CUSTODY_RESULTS_V3.md)). `delegatecall`/`staticcall` still need canonical-runtime integration coverage. The JS VM and wasmi harness now follow canonical balance movement (credit, debit, self-mint, per-entry transfers) and the 8e8 precompiles, but the custody contracts have not yet run on the canonical indexer. Production RPC/wallet/PSBT adapters and a live Bitcoin-node deployment remain follow-up work.
 
 ## Layout
 
