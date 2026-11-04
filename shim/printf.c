@@ -10,7 +10,7 @@
  *
  * The code below is musl's printf_core (src/stdio/vfprintf.c and
  * src/stdio/vsnprintf.c, MIT license, Copyright © 2005-2020 Rich Felker et
- * al.) restricted to the conversions d i o u x X c s p and %%, with every
+ * al.; the full notice is in NOTICE) restricted to the conversions d i o u x X c s p and %%, with every
  * flag, field width, precision (including .*) and the length modifiers hh h l
  * ll z j t. For those formats the output bytes, the return value, errno and
  * the bytes written to the destination are musl's: test/printf.test.mjs
