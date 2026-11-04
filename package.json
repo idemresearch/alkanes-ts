@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "description": "Experimental TypeScript SDK for Bitcoin alkanes contracts, compiled to WebAssembly with scriptc",
+  "license": "Apache-2.0",
   "type": "module",
   "engines": {
     "node": ">=24.0.0"

@@ -125,3 +125,10 @@ the call back. [Architecture](docs/ARCHITECTURE.md) has the details.
   [Counter/Token details](docs/EXAMPLES_OPTIMIZATION.md)
 
 The package is private; `@alkanes/contract` is the proposed public entry point.
+
+## License
+
+alkanes-ts is built by [Idem Research](https://github.com/idemresearch) and
+licensed under the [Apache License, Version 2.0](LICENSE). Copyright 2026 Idem
+Research. `shim/printf.c` includes code derived from musl libc under the MIT
+license; see [NOTICE](NOTICE).
