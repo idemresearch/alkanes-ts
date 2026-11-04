@@ -72,7 +72,7 @@ const dependency=d=>{
  if(rootAlkanes&&d.startsWith('metashrew-'))return `${d}={git=${JSON.stringify(metashrewGit[1])},tag=${JSON.stringify(metashrewGit[2])},features=${f}}`;
  return `${d}={path=${JSON.stringify(join(upstream,'crates',d))},features=${f}}`;
 };
-writeFileSync(join(work,'Cargo.toml'),`[package]\nname="alkanes-ts-runtime-test"\nversion="0.0.0"\nedition="2021"\n[workspace]\n[features]\nbenchmark=[]\nbaseline=[]\nexamples=[]\nexamples-baseline=["examples"]\nnative-counter=["examples"]\ncustody=["examples"]\n[lib]\ncrate-type=["cdylib","rlib"]\n[dependencies]\n${['alkanes','alkanes-support','metashrew-core','metashrew-support','protorune','protorune-support'].map(dependency).join('\n')}\nwasm-bindgen="${wasmBindgen}"\nwasm-bindgen-test="${wasmBindgenTest}"\nanyhow="1"\nbitcoin="0.32.4"\nserde_json="1"\nhex="0.4.3"\n`);
+writeFileSync(join(work,'Cargo.toml'),`[package]\nname="alkanes-ts-runtime-test"\nversion="0.0.0"\nedition="2021"\n[workspace]\n[features]\nbenchmark=[]\nbaseline=[]\nexamples=[]\nexamples-baseline=["examples"]\nnative-counter=["examples"]\ncustody=["examples"]\nv3=[]\n[lib]\ncrate-type=["cdylib","rlib"]\n[dependencies]\n${['alkanes','alkanes-support','metashrew-core','metashrew-support','protorune','protorune-support'].map(dependency).join('\n')}\nwasm-bindgen="${wasmBindgen}"\nwasm-bindgen-test="${wasmBindgenTest}"\nanyhow="1"\nbitcoin="0.32.4"\nserde_json="1"\nhex="0.4.3"\n`);
 // Each layout has its own committed lock. The first v3 run resolves from
 // the upstream lock and records the result; later runs use it --locked.
 const pinned=join(root,rootAlkanes?'integration/Cargo.v3.lock':'integration/Cargo.lock');
@@ -80,7 +80,11 @@ if(existsSync(pinned))copyFileSync(pinned,join(work,'Cargo.lock'));
 else if(rootAlkanes)copyFileSync(join(upstream,'Cargo.lock'),join(work,'Cargo.lock'));
 const log=join(work,benchmark?'benchmark.log':'tests.log');
 let text;
-try{text=execFileSync('cargo',['+stable','test','--release',...(existsSync(pinned)?['--locked']:[]),'--manifest-path',join(work,'Cargo.toml'),'--target','wasm32-unknown-unknown','--lib',...((benchmark||baseline||examples)?['--features',[...(benchmark?['benchmark']:[]),...(examples?['examples']:[]),...(nativeCounter?['native-counter']:[]),...(custody?['custody']:[]),...(baseline?[examples?'examples-baseline':'baseline']:[])].join(',')]:[]),'--',...(benchmark?[examples?'examples::benchmark_examples':'benchmark_capped_token']:[]),'--nocapture'],{cwd:root,encoding:'utf8',maxBuffer:100*1024*1024,env:{...process.env,CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER:'wasm-bindgen-test-runner'},stdio:['ignore','pipe','pipe']});}
+// Path dependencies from different alkanes-rs checkouts can share crate names
+// and versions, and cargo then reuses one checkout's artifacts for another.
+// Each upstream revision therefore gets its own target directory.
+const upstreamRevision=execFileSync('git',['rev-parse','HEAD'],{cwd:upstream,encoding:'utf8'}).trim();
+try{text=execFileSync('cargo',['+stable','test','--release',...(existsSync(pinned)?['--locked']:[]),'--manifest-path',join(work,'Cargo.toml'),'--target-dir',join(work,'target',upstreamRevision.slice(0,12)),'--target','wasm32-unknown-unknown','--lib',...((benchmark||baseline||examples||rootAlkanes)?['--features',[...(benchmark?['benchmark']:[]),...(examples?['examples']:[]),...(nativeCounter?['native-counter']:[]),...(custody?['custody']:[]),...(rootAlkanes?['v3']:[]),...(baseline?[examples?'examples-baseline':'baseline']:[])].join(',')]:[]),'--',...(benchmark?[examples?'examples::benchmark_examples':'benchmark_capped_token']:[]),'--nocapture'],{cwd:root,encoding:'utf8',maxBuffer:100*1024*1024,env:{...process.env,CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUNNER:'wasm-bindgen-test-runner'},stdio:['ignore','pipe','pipe']});}
 catch(error){writeFileSync(log,(error.stdout??'')+'\n'+(error.stderr??''));process.stderr.write((error.stdout??'').split('\n').slice(-50).join('\n')+'\n'+(error.stderr??'').split('\n').slice(-35).join('\n'));throw new Error('Alkanes runtime verification failed; full log: '+log);}
 writeFileSync(log,text);
 if(!existsSync(pinned))copyFileSync(join(work,'Cargo.lock'),pinned);
