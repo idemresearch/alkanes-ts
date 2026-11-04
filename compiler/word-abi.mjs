@@ -4,17 +4,17 @@ export const wordCallbacks=Object.entries({
  literal:['u32','u32','u32','u32'],op:['u32','u32','u32','u32'],
  readonly:['u32','u32'],fail:['u32','bytes'],explain:['u32','bytes'],load:['u32','bytes','u32','u32'],
  store:['u32','bytes','u32','u32'],mint:['u32','u32'],auth:['u32','u32','u32'],
- id:['u32','u32','u32'],unknown:['u32','u32'],finish:['u32','u32','u32','bytes'],
+ id:['u32','u32','u32'],unknown:['u32','u32'],finish:['u32','u32','u32','bytes'],tonumber:['u32'],
  // Three-operand checked math (mulDiv/mulDivUp/mulSqrt/sqrt) and asset custody
  // (received/held/retain/send/myself); see shim/word.c.
  op3:['u32','u32','u32','u32','u32'],custody:['u32','u32','u32','u32','u32'],
-}).map(([name,params])=>({name:'__w_'+name,params,returns:['forward','readonly','fail','explain','store','mint','auth','unknown'].includes(name)?'void':'u32'}));
-export const sdkCallbacks=[...wordCallbacks.filter(c=>['begin','status','count','input','literal','op','readonly','finish'].includes(c.name.slice(4))),...Object.entries({
+}).map(([name,params])=>({name:'__w_'+name,params,returns:['forward','readonly','fail','explain','store','mint','auth','unknown'].includes(name)?'void':name==='tonumber'?'f64':'u32'}));
+export const sdkCallbacks=[...wordCallbacks.filter(c=>['begin','status','count','incoming','input','literal','op','readonly','finish','tonumber'].includes(c.name.slice(4))),...Object.entries({
  copybytes:['bytes'],copyraw:['u32','u32'],size:['u32'],concat:['u32','u32'],equalbytes:['u32','u32'],decode:['u32','u32','u32'],
  rawload:['u32','u32'],rawstore:['u32','u32','u32'],context:['u32','u32'],parcel:['u32'],pay:['u32','u32','u32','u32'],
- mul:['u32','u32','u32'],fromnumber:['u32','f64'],tonumber:['u32'],decimal:['u32'],height:[],log:['u32'],failbytes:['u32','u32'],
+ mul:['u32','u32','u32'],fromnumber:['u32','f64'],decimal:['u32'],height:[],log:['u32'],failbytes:['u32','u32'],
  call:['u32','u32','u32','f64'],responsepart:['u32','u32'],finishresponse:['u32','u32','u32','bytes'],
-}).map(([name,params])=>({name:'__w_'+name,params,returns:['rawstore','log','failbytes'].includes(name)?'void':name==='tonumber'?'f64':'u32'}))];
+}).map(([name,params])=>({name:'__w_'+name,params,returns:['rawstore','log','failbytes'].includes(name)?'void':'u32'}))];
 export function wordAdapter(sdk=false){
  const callbacks=(sdk?sdkCallbacks:wordCallbacks).map(c=>{
   const n=c.name.slice(2),params=c.params.flatMap(t=>t==='bytes'?['i32','i32']:[t==='f64'?'f64':'i32']);
@@ -48,7 +48,11 @@ export function wordAdapter(sdk=false){
    (global.set $end(i32.add(global.get $next)(i32.shl(local.get $pages)(i32.const 16))))))
   (local.set $p(global.get $next))(global.set $next(i32.add(local.get $p)(local.get $size)))
   (i32.store(local.get $p)(local.get $n))(i32.add(local.get $p)(i32.const 4)))
- (func $initialize_once(if(i32.eqz(global.get $ready))(then(global.set $ready(i32.const 1))(call $initialize)(call $init))))
+ ;; Module initialization may build constant words (hoisted literals) before
+ ;; __w_begin, so it gets its own word stack instead of the linker default.
+ (func $initialize_once(if(i32.eqz(global.get $ready))(then(global.set $ready(i32.const 1))
+  (global.set $word_stack(i32.and(i32.add(call $reserve(i32.const 4096))(i32.const 4096))(i32.const -16)))
+  (call $initialize)(call $init))))
  (func(export "__bench_init")(call $initialize_once))
  (func(export "__execute")(result i32)(local $len i32)(local $p i32)
   (call $initialize_once)(local.set $len(call $request))(local.set $p(call $reserve(local.get $len)))

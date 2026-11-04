@@ -147,6 +147,33 @@ EXPORT("w_input") N input(Context *c, N i) {
   }
   return c->inputs + i * 16;
 }
+static U shift_left(U v, N n) {
+  L lo = (L)v, hi = (L)(v >> 64);
+  if (!n) return v;
+  if (n >= 64) return (U)(lo << (n - 64)) << 64;
+  return ((U)((hi << n) | (lo >> (64 - n))) << 64) | (lo << n);
+}
+static U shift_right(U v, N n) {
+  L lo = (L)v, hi = (L)(v >> 64);
+  if (!n) return v;
+  if (n >= 64) return hi >> (n - 64);
+  return ((U)(hi >> n) << 64) | ((lo >> n) | (hi << (64 - n)));
+}
+// IEEE round-to-nearest, ties-to-even. Exact below 2^53; monotonic, so every
+// larger value converts to at least 2^53.
+EXPORT("w_tonumber") double tonumber(N p) {
+  U v = get(p);
+  L high = (L)(v >> 64), low = (L)v;
+  N bits = high ? 128 - __builtin_clzll(high) : low ? 64 - __builtin_clzll(low) : 0;
+  if (bits <= 53) return (double)low;
+  N shift = bits - 53;
+  L mantissa = (L)shift_right(v,shift);
+  U remainder = v & (shift_left(1,shift) - 1), halfway = shift_left(1,shift - 1);
+  if (remainder > halfway || (remainder == halfway && (mantissa & 1))) mantissa++;
+  L scale_bits = (L)(1023 + shift) << 52;
+  double scale; __builtin_memcpy(&scale, &scale_bits, 8);
+  return (double)mantissa * scale;
+}
 EXPORT("w_literal") N literal(N a, N b, N c, N d) {
   return word((U)a | ((U)b << 32) | ((U)c << 64) | ((U)d << 96));
 }

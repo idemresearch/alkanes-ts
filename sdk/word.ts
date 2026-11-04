@@ -18,6 +18,7 @@ declare function __w_auth(c:number,block:number,tx:number):void;
 declare function __w_id(c:number,block:number,tx:number):number;
 declare function __w_unknown(c:number,value:number):void;
 declare function __w_finish(c:number,value:number,len:number,message:Uint8Array):number;
+declare function __w_tonumber(p:number):number;
 export function begin(c:Uint8Array,tracked:number):number{return __w_begin(c,tracked);}
 export function forward(c:number,value:number):void{__w_forward(c,value);}
 export function count(c:number):number{return __w_count(c);}
@@ -36,6 +37,8 @@ export function id(c:number,block:number,tx:number):number{return __w_id(c,block
 export function unknown(c:number,value:number):void{__w_unknown(c,value);}
 export function failed(c:number):boolean{return __w_status(c)!==0;}
 export function status(c:number):number{return __w_status(c);}
+// Exact below 2^53; every larger value converts to at least 2^53.
+export function toNumber(p:number):number{return __w_tonumber(p);}
 export class Id { constructor(public readonly block:number,public readonly tx:number){} }
 // Filled with compile-time UTF-8 byte literals by the frontend. No dynamic
 // Error/encoding runtime is needed on this restricted, uncaught-error path.
