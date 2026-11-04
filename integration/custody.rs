@@ -42,7 +42,7 @@ fn quote(amount: u128, reserve_in: u128, reserve_out: u128) -> u128 {
     x * reserve_out / (reserve_in + x)
 }
 fn report(scenario: &str, e: &Execution) {
-    metashrew_core::println!(
+    report!(
         "ALKANES_TS_CUSTODY {}",
         serde_json::json!({"scenario": scenario, "fuel": e.fuel, "us": e.micros})
     );

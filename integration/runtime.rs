@@ -18,6 +18,16 @@ use metashrew_support::index_pointer::KeyValuePointer;
 use protorune_support::balance_sheet::ProtoruneRuneId;
 use std::{collections::BTreeMap, io::Cursor};
 use wasm_bindgen_test::wasm_bindgen_test;
+// Result lines for integration/run.mjs. metashrew v9 (alkanes-rs v3) compiles
+// its println! to nothing unless the debug-log feature is on, so the harness
+// writes through metashrew's stdout directly, as println! does on earlier
+// revisions.
+macro_rules! report {
+    ($($t:tt)*) => {{
+        use std::fmt::Write as _;
+        writeln!(metashrew_core::stdio::stdout(), $($t)*).unwrap();
+    }};
+}
 #[cfg(feature="examples")]
 mod examples;
 #[cfg(feature="custody")]
@@ -561,7 +571,7 @@ fn benchmark_capped_token() {
         } else {
             values[iterations / 2].1
         };
-        metashrew_core::println!(
+        report!(
             "ALKANES_TS_BENCH {}",
             serde_json::json!({"variant":name,"method":method,"iterations":iterations,"fuel":values[0].0,"median_us":median})
         );
