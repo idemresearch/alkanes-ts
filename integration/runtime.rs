@@ -20,6 +20,8 @@ use std::{collections::BTreeMap, io::Cursor};
 use wasm_bindgen_test::wasm_bindgen_test;
 #[cfg(feature="examples")]
 mod examples;
+#[cfg(feature="custody")]
+mod custody;
 
 const TS: &[u8] = include_bytes!("./capped-token.wasm");
 #[cfg(feature = "baseline")]

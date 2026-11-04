@@ -2,7 +2,7 @@
 // Build comparison crates locally, without modifying the alkanes-rs checkout.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -14,6 +14,13 @@ const out = join(root, "bench/dist");
 const read = (path) => readFileSync(path, "utf8");
 const sha256 = (path) => createHash("sha256").update(readFileSync(path)).digest("hex");
 const command = (name, args, cwd = root) => execFileSync(name, args, { cwd, encoding: "utf8" }).trim();
+// alkanes-rs v3 takes metashrew from a git tag instead of crates/.
+const upstreamDependency = (dep) => {
+  if (existsSync(join(upstream, "crates", dep, "Cargo.toml"))) return `${dep} = { path = ${JSON.stringify(join(upstream, "crates", dep))} }`;
+  const git = new RegExp(`^${dep}\\s*=\\s*\\{\\s*git\\s*=\\s*"([^"]+)",\\s*tag\\s*=\\s*"([^"]+)"`, "m").exec(readFileSync(join(upstream, "Cargo.toml"), "utf8"));
+  if (!git) throw new Error(`alkanes-rs has no ${dep} crate or git dependency`);
+  return `${dep} = { git = ${JSON.stringify(git[1])}, tag = ${JSON.stringify(git[2])} }`;
+};
 const toolchain = /channel\s*=\s*"([^"]+)"/.exec(read(join(upstream, "rust-toolchain.toml")))?.[1];
 if (!toolchain) throw new Error("upstream Rust toolchain is not pinned");
 mkdirSync(work, { recursive: true });
@@ -29,7 +36,7 @@ for (const name of ["counter", "token"]) {
   }
   writeFileSync(join(crate, "src/lib.rs"), source);
   const dependencies = ["alkanes-support", "alkanes-runtime", "metashrew-support"]
-    .map((dep) => `${dep} = { path = ${JSON.stringify(join(upstream, "crates", dep))} }`).join("\n");
+    .map(upstreamDependency).join("\n");
   writeFileSync(join(crate, "Cargo.toml"), `[package]
 name = "alkanes-bench-${name}"
 version = "0.0.0"
