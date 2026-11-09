@@ -34,13 +34,13 @@
     "bench:art": "node scripts/bench-art.mjs"
   },
   "devDependencies": {
-    "@scriptc/runtime-wasm32-wasi": "0.4.7",
-    "@scriptc/types": "0.4.7",
+    "@scriptc/runtime-wasm32-wasi": "0.4.10",
+    "@scriptc/types": "0.4.10",
     "binaryen": "^125.0.0",
-    "scriptc": "0.4.7",
+    "scriptc": "0.4.10",
     "typescript": "^5.9.3"
   },
   "allowScripts": {
-    "scriptc@0.4.7": true
+    "scriptc@0.4.10": true
   }
 }
