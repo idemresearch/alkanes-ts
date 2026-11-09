@@ -373,3 +373,52 @@ export function stripCustomSections(bytes) {
   }
   return Buffer.concat(parts);
 }
+
+// The module with a name section holding function names only, and no other
+// custom section. Binaryen addresses data segments and globals by name once
+// they have one, which scripts/snapshot.mjs does not expect.
+export function functionNamesOnly(bytes) {
+  const parts = [bytes.subarray(0, 8)];
+  let i = 8;
+  const leb = () => {
+    let result = 0, shift = 0, byte;
+    do {
+      byte = bytes[i++];
+      result += (byte & 0x7f) * 2 ** shift;
+      shift += 7;
+    } while (byte & 0x80);
+    return result;
+  };
+  const encode = (value) => {
+    const out = [];
+    do {
+      const byte = value & 0x7f;
+      value >>>= 7;
+      out.push(value ? byte | 0x80 : byte);
+    } while (value);
+    return Buffer.from(out);
+  };
+  while (i < bytes.length) {
+    const start = i++;
+    const end = leb() + i;
+    if (bytes[start] !== 0) {
+      parts.push(bytes.subarray(start, end));
+    } else {
+      const length = leb();
+      const name = Buffer.from(bytes.subarray(i, i + length)).toString("utf8");
+      i += length;
+      while (name === "name" && i < end) {
+        const subsection = i;
+        const kind = bytes[i++];
+        const subEnd = leb() + i;
+        if (kind === 1) {
+          const payload = Buffer.concat([Buffer.from([4]), Buffer.from("name"), bytes.subarray(subsection, subEnd)]);
+          parts.push(Buffer.from([0]), encode(payload.length), payload);
+        }
+        i = subEnd;
+      }
+    }
+    i = end;
+  }
+  return Buffer.concat(parts);
+}
