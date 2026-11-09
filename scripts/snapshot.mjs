@@ -35,8 +35,9 @@ function exportedFunction(module, name) {
 }
 
 // Returns the bytes of a module whose initialization (performed by calling
-// `initExport`) has already happened. `initExport` is removed.
-export function snapshotModule(bytes, { initExport = "__bench_init", features = FEATURES } = {}) {
+// `initExport`) has already happened. `initExport` is removed. `debugInfo`
+// keeps the input's name section in the result.
+export function snapshotModule(bytes, { initExport = "__bench_init", features = FEATURES, debugInfo = false } = {}) {
   // 1. Instrument: export every defined global so its post-init value can be
   //    read. The instrumented copy is only used for evaluation.
   const probe = binaryen.readBinary(bytes);
@@ -152,7 +153,13 @@ export function snapshotModule(bytes, { initExport = "__bench_init", features = 
   replaceWithNop(call.id === binaryen.CallId ? call.target : initFunction);
 
   if (!module.validate()) throw new Error("snapshot produced an invalid module");
-  const out = module.emitBinary();
-  module.dispose();
+  binaryen.setDebugInfo(debugInfo);
+  let out;
+  try {
+    out = module.emitBinary();
+  } finally {
+    binaryen.setDebugInfo(false);
+    module.dispose();
+  }
   return { bytes: out, pages, segments: segments.length, dataBytes: segments.reduce((n, s) => n + s.data.length, 0) };
 }

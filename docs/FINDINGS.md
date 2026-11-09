@@ -6,13 +6,15 @@ and every saved report are indexed in [Benchmarks](BENCHMARKS.md).
 - **What compiles:** scriptc handled everything the SDK needed, including classes, closures, `bigint` arithmetic for u128, `Map`, `Uint8Array`, `DataView`, `TextEncoder`/`TextDecoder`, `JSON.stringify` and try/catch. Two rough edges: `number.toString(radix)` is refused, and indexing a `bigint[]` is typed `bigint | undefined`, which is why handlers get an `Inputs` wrapper.
 - **Engine compatibility:** the output uses only bulk-memory, sign-ext, saturating float-to-int and mutable globals, all supported by wasmi 0.37 (no SIMD). The build pins wasm-opt to those features.
 - **Size:** including the scriptc runtime:
-  - Counter: 85 KB raw / 41 KB gzipped
-  - CappedToken: 70 KB / 36 KB
-  - Token: 93 KB / 44 KB
-  - AmmPool: 86 KB / 40 KB
-  - ShareVault: 91 KB / 42 KB
-  - TimelockTreasury: 83 KB / 39 KB
-  - AmmRouter: 71 KB / 36 KB
+  - Counter: 89 KB raw / 42 KB gzipped
+  - CappedToken: 74 KB / 37 KB
+  - Token: 97 KB / 45 KB
+  - AmmPool: 88 KB / 41 KB
+  - ShareVault: 93 KB / 43 KB
+  - TimelockTreasury: 85 KB / 40 KB
+  - AmmRouter: 72 KB / 37 KB
+
+  scriptc 0.4.10's runtime added about 3 KB to each module over 0.4.7 ([report](../bench/SCRIPTC_0410_RESULTS.md)). Roughly 35–45% of a module's code is the runtime's memory reclamation (cycle collector, release paths), which a call never needs because the instance is discarded afterwards. `npm run size -- <contract>` lists a module's functions by size.
 
   The optimized Rust twins built against rc.4 are 123 KB, 134 KB and 130 KB. The vault, treasury and router were 320–343 KB on the general bigint backend before [word lowering](WORD_LOWERING.md#chain-queries-and-external-calls) took over their chain queries and external calls. That also cut their fuel by 68–92% ([report](../bench/ADVANCED_WORD_RESULTS.md)).
 - **Shadow stack:** `scripts/link.mjs` links contracts with a 1 MiB stack, the size Rust uses. Zig's default for wasm32 is 16 MiB, which gave every instance about 17 MB of initial memory and made each Counter/Token call about 2.5 ms slower on the canonical indexer ([report](../bench/CANONICAL_STACK_SIZE_RESULTS.md)). The stack stays first, so an overflow traps. `buildLibrary({ stackSize: null })` keeps the toolchain default.
@@ -39,6 +41,7 @@ and every saved report are indexed in [Benchmarks](BENCHMARKS.md).
   - a cross-contract call: 6% less.
 
   The same reports have the per-scenario times. The 1 MiB contract stack accounts for much of this ([stack report](../bench/CANONICAL_STACK_SIZE_RESULTS.md), measured on f9446fd). On this 4-vCPU VM a fixed cost of about 11–13 ms per block dominates. The earlier [canonical-runtime comparison](../bench/EXAMPLES_RUNTIME_RESULTS.md), [frontend comparison](../bench/FRONTEND_SPEED_RESULTS.md), [previous Rust comparison](../bench/SPEED_RESULTS.md), [older Rust tables](../bench/README.md) and [initial isolation report](../bench/ISOLATION.md) remain historical records. Fuel and CPU time are separate metrics.
+- **Callback arguments:** scriptc converts each `u32` callback argument with an out-of-line `ToUint32`. Declaring the arguments `f64` and converting them in the adapter removed 7–29% of the instruction fuel of ordinary calls under the wasmi host model, with identical results in every scenario ([report](../bench/SCRIPTC_0410_RESULTS.md)). The canonical-indexer figures above were measured before this change, with scriptc 0.4.7, and have not been rerun. About a quarter of the remaining callbacks are status checks that could return with the operation's result.
 - **Host reads cost one callback per 4 bytes.** That is cheap for storage values but would add up for `transaction()`/`block()` on large blocks.
 - **Determinism** needs a proper audit before anything holds value. Known so far: floats in wasmi are software-deterministic, `Map` iteration is insertion-ordered, the clock reads 0, and randomness traps. Not yet audited: the rest of the scriptc runtime, such as hashing and GC timing.
 - **Actual runtime coverage:** CappedToken tests deployment envelopes, initialization rollback, standard-auth opcode 1, real UTXO balances, cap/u128 boundaries, reentry, caller/callee rollback and callback cache invalidation through the unmodified indexer. Counter and Token add wide increments/mints, checked loops, storage fill, height, caller ownership and cross-contract data/rollback. The custody contracts run there too, with custody read from the indexer's balance table:

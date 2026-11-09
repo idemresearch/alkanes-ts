@@ -22,6 +22,10 @@
 // shim/printf.c implements. If that cannot be shown, the wrapper links again
 // without the extra objects, keeping libc's printf. The report records which
 // printf was linked and the formats found or the reason.
+//
+// ALKANES_KEEP_NAMES=1 keeps the name section without the report too. The
+// build carries function names to build/<name>/named.wasm and ships the
+// module without them.
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -46,7 +50,7 @@ if (target < 0 || !/^wasm32-wasi/.test(args[target + 1] ?? "")) {
   fail(`expected a wasm32-wasi link, got: ${args.join(" ")}`);
 }
 const outFile = args[output + 1];
-if (report) args = args.filter((arg) => arg !== "-Wl,--strip-debug");
+if (report || process.env.ALKANES_KEEP_NAMES) args = args.filter((arg) => arg !== "-Wl,--strip-debug");
 // zig cc gives wasm32 modules a 16 MiB shadow stack, placed before the data,
 // so every instance would start with about 17 MB of linear memory. Alkanes
 // grows each instance to 512 pages, and on the canonical indexer the larger

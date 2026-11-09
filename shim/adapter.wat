@@ -147,8 +147,13 @@
 
   ;; Reads 4 bytes of scratch. Offsets past the end land in the allocation's
   ;; headroom; the SDK ignores bytes beyond the length it was given.
-  (func (export "__alk_scratch_read") (param $offset i32) (result i32)
-    (i32.load (i32.add (global.get $scratch) (local.get $offset))))
+  ;; The offset is declared f64 in the build profile: scriptc would convert a
+  ;; u32 argument with an out-of-line ToUint32 on every call, and this is the
+  ;; callback every host read repeats. $u32 does the same conversion here; the
+  ;; build inserts it (U32_CONVERSION in compiler/word-abi.mjs) at the marker.
+  (func (export "__alk_scratch_read") (param $offset f64) (result i32)
+    (i32.load (i32.add (global.get $scratch) (call $u32 (local.get $offset)))))
+  ;; @u32-conversion
 
   (func (export "__alk_load_storage") (param $ptr i32) (param $len i32) (result i32)
     (local $key i32)
