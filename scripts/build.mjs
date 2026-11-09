@@ -27,7 +27,7 @@ import { gzipSync } from "node:zlib";
 import ts from "typescript";
 import { compileContract } from "../compiler/index.mjs";
 import { generateClient } from "../compiler/client.mjs";
-import { wordCallbacks, sdkCallbacks, wordAdapter } from "../compiler/word-abi.mjs";
+import { wordProfile, wordAdapter, U32_CONVERSION } from "../compiler/word-abi.mjs";
 import { snapshotModule, SnapshotRefused } from "./snapshot.mjs";
 import { functionNamesOnly, stripCustomSections } from "./printf-formats.mjs";
 
@@ -48,7 +48,8 @@ const FEATURES = [
 const PROFILE_CALLBACKS = [
   { name: "__alk_abort", params: [], returns: "void" },
   { name: "__alk_log", params: ["bytes"], returns: "void" },
-  { name: "__alk_scratch_read", params: ["u32"], returns: "u32" },
+  // An f64 offset, converted in the adapter: see shim/adapter.wat.
+  { name: "__alk_scratch_read", params: ["f64"], returns: "u32" },
   { name: "__alk_load_storage", params: ["bytes"], returns: "u32" },
   { name: "__alk_balance", params: ["bytes", "bytes"], returns: "u32" },
   { name: "__alk_sequence", params: [], returns: "u32" },
@@ -310,7 +311,8 @@ function finish({ compiled, work, out, word, stackSize, extraExports, benchmark,
     // isolation benchmarks); metadce removes it otherwise.
     adapterSource = join(work, "adapter.wat");
     writeFileSync(adapterSource, readFileSync(join(root, "shim", "adapter.wat"), "utf8")
-      .replace("(func $ensure_initialized", '(func $ensure_initialized (export "__bench_init")'));
+      .replace("(func $ensure_initialized", '(func $ensure_initialized (export "__bench_init")')
+      .replace(";; @u32-conversion", U32_CONVERSION));
   }
   const adapter = join(work, "adapter.wasm");
   const wasi = join(work, "wasi.wasm");
@@ -411,7 +413,7 @@ export function buildLibrary({ entry, work, out, extraExports = [], benchmark = 
           sink_register_symbol: "contract_sink",
           callback_register_symbol: "contract_callback",
         },
-        callbacks: word === "sdk" ? sdkCallbacks : word ? wordCallbacks : PROFILE_CALLBACKS,
+        callbacks: word ? wordProfile(word === "sdk") : PROFILE_CALLBACKS,
         exports: [
           { export: "execute", symbol: "contract_execute", params: ["bytes"], returns: word ? "f64" : "bytes" },
           { export: "meta", symbol: "contract_meta", params: [], returns: "bytes" },
