@@ -29,7 +29,7 @@ Authenticated mint consumes 45% less fuel and takes 17% less time than Rust O3/f
 3. `shim/word.c` implements those SDK leaves with fixed-width unsigned 128-bit values. Zig compiles it to Wasm; the build merges it with the scriptc module and ABI adapter. It contains no CappedToken selectors, cap rule or supply-update method.
 4. Alkanes executes the resulting single Wasm module. All helper instructions remain inside its normal wasmi fuel metering. The only external imports are the canonical `env` functions.
 
-The private handles cross scriptc's scalar callback ABI as exact 32-bit addresses. They are not floating-point representations of token values. On-chain values retain all 128 bits; public contract types and generated clients still use bigint and `{ block, tx }` IDs.
+The private handles cross scriptc's scalar callback ABI as exact 32-bit addresses. They are not floating-point representations of token values. The build profile declares them `f64` and the adapter converts each one to the u32 the word SDK takes, because scriptc's own conversion of a `u32` argument is an out-of-line `ToUint32` on every call ([report](../bench/SCRIPTC_0410_RESULTS.md)); the adapter's conversion gives the same result for every double. On-chain values retain all 128 bits; public contract types and generated clients still use bigint and `{ block, tx }` IDs.
 
 The manifest reports `lowering: "word-v1"` or `"bigint"`. `compileContract({ ..., wordLowering: true })` requests this optimization; an unsupported construct selects the general backend for the whole contract. `wordLowering: false` builds the bigint reference. Internal compiler faults are errors rather than silent fallback.
 

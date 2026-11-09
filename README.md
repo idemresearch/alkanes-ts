@@ -47,7 +47,7 @@ less fuel than optimized Rust.
 - **Less fuel than Rust:** 2.4–10.6× less than Rust O3/LTO plus wasm-opt on
   alkanes-rs v3.0.0-rc.4, host and storage charges included. Blocks index
   6–28% faster.
-- **Smaller binaries:** 70–93 KB per contract including the scriptc runtime,
+- **Smaller binaries:** 72–97 KB per contract including the scriptc runtime,
   against 123–134 KB for the optimized Rust twins.
 - **Tested on the real indexer:** CappedToken and the custody contracts run
   through the unmodified upstream indexer with deployment envelopes, the
@@ -60,9 +60,13 @@ Requires Node.js 24+ and [Zig](https://ziglang.org) on `PATH`.
 ```console
 $ npm install
 $ npm run build              # every contract, or: npm run build -- counter
-dist/counter.wasm  85430 bytes (41013 gzipped), initialized snapshot ...
+dist/counter.wasm  88942 bytes (42246 gzipped), initialized snapshot ...
 $ npm test                   # compiler, client, and Wasm host-model tests
 ```
+
+Contracts build in parallel, and a build whose inputs have not changed is
+skipped (`npm run build -- --force` rebuilds). `npm run size -- counter` lists
+the largest functions of a built contract.
 
 To add a contract, create `contracts/<name>/index.ts` with a default-exported
 `Contract`, then run `npm run build -- <name>`. The
@@ -73,8 +77,8 @@ With Rust installed, run a contract under wasmi, the engine the indexer uses:
 
 ```console
 $ npm run check:wasmi -- dist/counter.wasm --meta 0 1,5 2 3
-[1,5]  fuel=5749      ok alkanes=0 [] data=05000000000000000000000000000000 u128=5
-[3]  fuel=4721      REVERT "Error: intentional failure"
+[1,5]  fuel=4764      ok alkanes=0 [] data=05000000000000000000000000000000 u128=5
+[3]  fuel=3943      REVERT "Error: intentional failure"
 ```
 
 Point `ALKANES_RS` at an alkanes-rs checkout to run the canonical-indexer tests

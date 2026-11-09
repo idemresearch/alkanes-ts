@@ -11,7 +11,7 @@ refreshing either report.
 
 Requirements: Node.js 24+, [Zig](https://ziglang.org) on `PATH` (the current reports use 0.17.0). Zig links scriptc output and builds the fixed-width Wasm SDK. Rust is needed for the standalone wasmi check and canonical-runtime integration/benchmarks; see [CappedToken setup](CAPPED_TOKEN.md#verification-and-benchmarking).
 
-The compiler, `@scriptc/runtime-wasm32-wasi`, and `@scriptc/types` are pinned together at **0.4.7**. Saved benchmark reports record the toolchain used for each measurement.
+The compiler, `@scriptc/runtime-wasm32-wasi`, and `@scriptc/types` are pinned together at **0.4.10**. Saved benchmark reports record the toolchain used for each measurement; the canonical-indexer reports below were measured with 0.4.7 and have not been rerun. The [0.4.10 report](../bench/SCRIPTC_0410_RESULTS.md) compares the two releases, and the current build, on the in-repo wasmi host model.
 
 ## Reports
 
@@ -32,10 +32,10 @@ The [Counter/Token runtime comparison](../bench/EXAMPLES_RUNTIME_RESULTS.md) use
 ```console
 $ npm install
 $ npm run build              # every contract in contracts/, or: npm run build -- counter
-dist/amm-pool.wasm  86094 bytes (40296 gzipped), initialized snapshot ...
-dist/capped-token.wasm  70364 bytes (35662 gzipped), initialized snapshot ...
-dist/counter.wasm  85430 bytes (41013 gzipped), initialized snapshot ...
-dist/token.wasm  93286 bytes (44144 gzipped), initialized snapshot ...
+dist/amm-pool.wasm  88384 bytes (41294 gzipped), initialized snapshot ...
+dist/capped-token.wasm  73532 bytes (36760 gzipped), initialized snapshot ...
+dist/counter.wasm  88942 bytes (42246 gzipped), initialized snapshot ...
+dist/token.wasm  96616 bytes (45357 gzipped), initialized snapshot ...
 $ npm test                   # rebuild, compiler/client tests, and Wasm host-model tests
 $ ALKANES_RS=/path/to/alkanes-rs npm run test:runtime
 $ ALKANES_RS=/path/to/alkanes-rs npm run bench:capped -- --iterations 30
@@ -44,12 +44,12 @@ $ ALKANES_RS=/path/to/alkanes-rs node integration/run.mjs --custody   # adds Amm
 $ npm run build:bench:examples
 $ ALKANES_RS=/path/to/alkanes-rs npm run bench:examples -- --iterations 30 --baseline dist/examples-before
 $ npm run check:wasmi -- dist/counter.wasm --meta 0 1,5 2 3
-loaded dist/counter.wasm (85430 bytes) under wasmi 0.37.2
-__meta  fuel=371       { "contract": "Counter", ... }
-[0]  fuel=4761      ok alkanes=0 [] data=
-[1,5]  fuel=5749      ok alkanes=0 [] data=05000000000000000000000000000000 u128=5
-[2]  fuel=3890      ok alkanes=0 [] data=05000000000000000000000000000000 u128=5
-[3]  fuel=4721      REVERT "Error: intentional failure"
+loaded dist/counter.wasm (88942 bytes) under wasmi 0.37.2
+__meta  fuel=369       { "contract": "Counter", ... }
+[0]  fuel=4161      ok alkanes=0 [] data=
+[1,5]  fuel=4764      ok alkanes=0 [] data=05000000000000000000000000000000 u128=5
+[2]  fuel=3374      ok alkanes=0 [] data=05000000000000000000000000000000 u128=5
+[3]  fuel=3943      REVERT "Error: intentional failure"
 ```
 
 Each argument to `check:wasmi` is one call, given as comma-separated u128 inputs with the opcode first, optionally followed by an incoming parcel such as `@2:11=1000+2:12=4000`. `--deploy block:tx=other.wasm` adds contracts for cross-contract calls. Storage and alkane balances persist between calls. This harness counts instruction fuel only, without the canonical host and storage charges.
