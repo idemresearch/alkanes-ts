@@ -1,5 +1,5 @@
 import {Contract,view,type u128} from '../../sdk/authoring.ts';
-import {mulDiv,mulDivUp,mulSqrt,sqrt,min,max} from '../../sdk/u128.ts';
+import {mulDiv,mulDivUp,mulMod,mulSqrt,sqrt,min,max} from '../../sdk/u128.ts';
 // Differential probe for the word-v1 wide arithmetic: every operation, plus
 // local reassignment, ternaries, boolean equality, helpers and error order.
 export default class WordMath extends Contract {
@@ -33,5 +33,22 @@ export default class WordMath extends Contract {
   let out=this.pick(up,mulDivUp(a,b,d),this.mean(a,b));
   out=up?out:min(out,max(a,b));
   return out;
+ }
+ // A product divided, reduced or rooted where it is written is exact.
+ @view({opcode:13}) exact(a:u128,b:u128,d:u128):u128{return a*b/d;}
+ @view({opcode:14}) exactmod(a:u128,b:u128,d:u128):u128{return a*b%d;}
+ @view({opcode:15}) exactroot(a:u128,b:u128):u128{return sqrt(a*b);}
+ @view({opcode:16}) parenthesized(a:u128,b:u128,d:u128):u128{return ((a*b))/(d);}
+ @view({opcode:17}) mulmod(a:u128,b:u128,d:u128):u128{return mulMod(a,b,d);}
+ // Only the last multiplication is exact; a*b must fit before it meets d.
+ @view({opcode:18}) triple(a:u128,b:u128,d:u128):u128{return a*b*d/b;}
+ // A stored product is a u128, and so is a product that is the divisor.
+ @view({opcode:19}) stored(a:u128,b:u128,d:u128):u128{const p=a*b;return p/d;}
+ @view({opcode:20}) divisor(a:u128,b:u128,d:u128):u128{return d/(a*b);}
+ // Inside larger expressions and assignments, with the first failure winning.
+ @view({opcode:21}) nested(a:u128,b:u128,d:u128):u128{
+  let x=a*b/d+a*b%d;
+  x=x*d/(b+1n);
+  return x-sqrt(x*x)+sqrt(a*d);
  }
 }

@@ -182,3 +182,33 @@ test("generated Counter client reads, simulates without committing, and prepares
   assert.equal(api.read.increment, undefined);
   assert.equal(api.prepare.getCount, undefined);
 });
+
+test("a product divided, reduced or rooted in place lowers to the exact forms; a stored one warns", () => {
+  const math = 'import { sqrt } from "../../sdk/u128.ts";\n';
+  const lowered = (body) => compile(`@view({opcode:1}) a(x:u128,y:u128,d:u128):u128{${body}}`, math).lowered;
+  assert.match(lowered("return x*y/d;"), /__alk_math\.mulDiv\(x, y, d\)/);
+  assert.match(lowered("return (x*y)%d;"), /__alk_math\.mulMod\(x, y, d\)/);
+  assert.match(lowered("return sqrt(x*y);"), /__alk_math\.mulSqrt\(x, y\)/);
+  // Only the multiplication directly under the division: x*y is checked here.
+  assert.match(lowered("return x*y*d/y;"), /__alk_math\.mulDiv\(__alk_math\.mul\(x, y\), d, y\)/);
+  // Everything else keeps its checked operation.
+  assert.match(lowered("return d/(x*y);"), /__alk_math\.div\(d, \(?__alk_math\.mul\(x, y\)\)?\)/);
+  assert.match(lowered("const p=x*y; return p/d;"), /__alk_math\.div\(p, d\)/);
+  assert.match(lowered("return sqrt(x+y);"), /sqrt\(__alk_math\.add\(x, y\)\)/);
+  assert.doesNotMatch(lowered("return x*y+d;"), /mulDiv|mulMod|mulSqrt/);
+
+  const warnings = (body) => compile(`@view({opcode:1}) a(x:u128,y:u128,d:u128):u128{${body}}`, math).warnings;
+  assert.deepEqual(warnings("return x*y/d;"), []);
+  assert.deepEqual(warnings("const p=x*y; return p+d;"), []);
+  assert.deepEqual(warnings("const p=x*y; return p/d+p;"), []);
+  assert.deepEqual(warnings("const p=x*y; return d/p;"), []);
+  for (const body of ["const p=x*y; return p/d;", "const p=(x*y); return (p)%d;", "const p=x*y; return sqrt(p);", "const p=x*y; return p/d+p%y;"]) {
+    const [warning, ...rest] = warnings(body);
+    assert.deepEqual(rest, []);
+    assert.match(warning, /probe\.ts:5:\d+: ALK2001 warning: 'p' is checked as a u128 where it is stored/);
+  }
+  // The example contracts are free of it.
+  for (const name of readdirSync("contracts")) {
+    assert.deepEqual(compileContract({ filename: resolve("contracts", name, "index.ts") })?.warnings ?? [], [], name);
+  }
+});

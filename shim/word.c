@@ -338,8 +338,10 @@ static U wide_divide(U x, U y, int want_rem) {
   wide_div(u, wide_size(u, 4), v, wide_size(v, 4), q, r);
   return wide_join(want_rem ? r : q);
 }
-// floor(a * b / d), or the ceiling when up; checked like sdk/u128.ts.
-static U wide_muldiv(Context *c, U a, U b, U d, int up) {
+// floor(a * b / d), the ceiling (mode 1), or the remainder a * b % d (mode
+// 9), from the exact 256-bit product; checked like sdk/u128.ts. The mode is
+// the op3 kind, so op3 has one call site and the body is not duplicated.
+static U wide_muldiv(Context *c, U a, U b, U d, int mode) {
   if (!d) {
     error(c, DIV_ZERO);
     return 0;
@@ -350,12 +352,14 @@ static U wide_muldiv(Context *c, U a, U b, U d, int up) {
   wide_clear(q, 8);
   wide_clear(r, 4);
   wide_div(p, wide_size(p, 8), v, wide_size(v, 4), q, r);
+  if (mode == 9)
+    return wide_join(r); // below d, so it always fits
   if (q[4] | q[5] | q[6] | q[7]) {
     error(c, 2);
     return 0;
   }
   U quotient = wide_join(q);
-  if (up && (r[0] | r[1] | r[2] | r[3])) {
+  if (mode == 1 && (r[0] | r[1] | r[2] | r[3])) {
     if (!~quotient) {
       error(c, 2);
       return 0;
@@ -687,9 +691,10 @@ EXPORT("w_op3") N op3(Context *c, N kind, N a, N b, N d) {
     return get(a) < get(b) ? a : b;
   case 8: // max
     return get(a) > get(b) ? a : b;
-  case 0: // mulDiv
+  case 0: // mulDiv, and a * b / d written with operators
   case 1: // mulDivUp
-    return word(wide_muldiv(c, get(a), get(b), get(d), kind == 1));
+  case 9: // mulMod, and a * b % d written with operators
+    return word(wide_muldiv(c, get(a), get(b), get(d), kind));
   case 2: // mulSqrt: floor(sqrt(a * b)) of the exact 256-bit product
     wide_mul256(get(a), get(b), p);
     return word(wide_isqrt(p));

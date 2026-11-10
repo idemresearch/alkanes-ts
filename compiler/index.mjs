@@ -251,7 +251,7 @@ export function compileContract({ filename, source = readFileSync(filename, "utf
     "u128ToBytes", "bytesToU128", "utf8", "fromUtf8", "toHex", "bytesEqual", "concat", "checkedAdd", "checkedSub",
     "get", "getU128", "getString", "isEmpty", "select", "keyword", "serialize", "equals", "toString", "withData", "withU128", "withString",
     "assert", "available", "received", "held", "checked", "add", "sub", "mul", "div", "mod", "bitAnd", "bitOr", "bitXor", "shl", "shr", "bitNot", "wrappingAdd", "wrappingSub", "mulDiv",
-    "mulDivUp", "min", "max", "sqrt", "mulSqrt"]);
+    "mulDivUp", "mulMod", "min", "max", "sqrt", "mulSqrt"]);
   const symbolOf = (node) => {
     const sym = checker.getSymbolAtLocation(node);
     return sym && (sym.flags & ts.SymbolFlags.Alias ? checker.getAliasedSymbol(sym) : sym);
@@ -340,6 +340,50 @@ export function compileContract({ filename, source = readFileSync(filename, "utf
   const mathCall = (name, args) => f.createCallExpression(f.createPropertyAccessExpression(f.createIdentifier("__alk_math"), name), undefined, args);
   const checkValue = (node) => mathCall("checked", [node]);
   const simpleLHS = (node) => ts.isIdentifier(node) || (ts.isPropertyAccessExpression(node) && node.expression.kind === ts.SyntaxKind.ThisKeyword);
+  // A u128 product that is divided, reduced or rooted where it is written:
+  // `a * b / d`, `a * b % d` and `sqrt(a * b)` use the exact 256-bit product,
+  // as plain bigint arithmetic does, and only the result is checked. Once a
+  // product is stored, passed or returned it is a u128 and must fit.
+  const exactProduct = (node) => {
+    while (ts.isParenthesizedExpression(node)) node = node.expression;
+    return ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.AsteriskToken && isBig(node) ? node : null;
+  };
+  const u128Function = (node, name) => ts.isIdentifier(node) && !!symbolOf(node)?.declarations?.some((d) =>
+    ts.isFunctionDeclaration(d) && d.name?.text === name && resolve(d.getSourceFile().fileName) === resolve(sdkDirectory, "u128.ts"));
+  // A product stored in a local and then only divided, reduced or rooted
+  // reads like the exact form but is checked at 128 bits where it is stored.
+  // That is legal, so it is a warning: the build prints it and continues.
+  const warnings = [];
+  for (const { member } of methods.values()) {
+    const body = member.body;
+    const declarations = [];
+    const collect = (node) => {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && exactProduct(node.initializer)) declarations.push(node);
+      ts.forEachChild(node, collect);
+    };
+    if (body) collect(body);
+    for (const declaration of declarations) {
+      const symbol = checker.getSymbolAtLocation(declaration.name);
+      const uses = [];
+      const find = (node) => {
+        if (ts.isIdentifier(node) && node !== declaration.name && checker.getSymbolAtLocation(node) === symbol) uses.push(node);
+        ts.forEachChild(node, find);
+      };
+      find(body);
+      const reduced = (use) => {
+        let node = use;
+        while (ts.isParenthesizedExpression(node.parent)) node = node.parent;
+        const parent = node.parent;
+        if (ts.isBinaryExpression(parent)) return parent.left === node && [ts.SyntaxKind.SlashToken, ts.SyntaxKind.PercentToken].includes(parent.operatorToken.kind);
+        return ts.isCallExpression(parent) && parent.arguments.length === 1 && u128Function(parent.expression, "sqrt");
+      };
+      if (uses.length > 0 && uses.every(reduced)) {
+        const { line, character } = parsed.getLineAndCharacterOfPosition(declaration.getStart(parsed));
+        warnings.push(`${filename}:${line + 1}:${character + 1}: ALK2001 warning: '${declaration.name.text}' is checked as a u128 where it is stored, before it is divided. ` +
+          `Write the product inside the division (a * b / d) for the exact 256-bit product, as mulDiv computes it.`);
+      }
+    }
+  }
   const transform = (node) => {
     const result = ts.transform(node, [(context) => {
       const visit = (n) => {
@@ -352,6 +396,11 @@ export function compileContract({ filename, source = readFileSync(filename, "utf
         if (ts.isBinaryExpression(n) && (isBig(n.left) || isBig(n.right))) {
           const op = n.operatorToken.kind;
           if ([ts.SyntaxKind.PlusToken, ts.SyntaxKind.PlusEqualsToken].includes(op) && !isBig(n)) return ts.visitEachChild(n, visit, context);
+          if (op === ts.SyntaxKind.SlashToken || op === ts.SyntaxKind.PercentToken) {
+            const product = exactProduct(n.left);
+            if (product) return mathCall(op === ts.SyntaxKind.SlashToken ? "mulDiv" : "mulMod",
+              [ts.visitNode(product.left, visit), ts.visitNode(product.right, visit), ts.visitNode(n.right, visit)]);
+          }
           if (operators.has(op)) return mathCall(operators.get(op), [ts.visitNode(n.left, visit), ts.visitNode(n.right, visit)]);
           if (compound.has(op)) {
             if (!simpleLHS(n.left)) fail(n.left, "u128 compound assignments require a local variable or this.field");
@@ -368,6 +417,10 @@ export function compileContract({ filename, source = readFileSync(filename, "utf
             if (!simpleLHS(n.operand) || !(ts.isExpressionStatement(n.parent) || (ts.isForStatement(n.parent) && n.parent.incrementor === n))) fail(n, "u128 ++/-- is supported only as a standalone statement or for incrementor");
             return f.createAssignment(value, mathCall(n.operator === ts.SyntaxKind.PlusPlusToken ? "add" : "sub", [value, f.createBigIntLiteral("1n")]));
           }
+        }
+        if (ts.isCallExpression(n) && n.arguments.length === 1 && u128Function(n.expression, "sqrt")) {
+          const product = exactProduct(n.arguments[0]);
+          if (product) return checkValue(mathCall("mulSqrt", [ts.visitNode(product.left, visit), ts.visitNode(product.right, visit)]));
         }
         if (ts.isCallExpression(n) && isBig(n)) return checkValue(ts.visitEachChild(n, visit, context));
         if (ts.isVariableDeclaration(n) && n.initializer && isBig(n.name)) {
@@ -456,5 +509,5 @@ export function meta(): Uint8Array { return __alk_utf8(${JSON.stringify(abi)}); 
   const word=wordLowering?lowerWords({filename,source,manifest,abi,sdkDirectory}):null;
   const sdk=wordLowering&&!word?lowerSDK({filename,source:lowered,manifest,abi,sdkDirectory}):null;
   manifest.lowering=word?'word-v1':sdk?'word-sdk-v1':'bigint';
-  return { lowered:word??sdk??lowered, abi, manifest, word:word?true:sdk?'sdk':false };
+  return { lowered:word??sdk??lowered, abi, manifest, word:word?true:sdk?'sdk':false, warnings };
 }

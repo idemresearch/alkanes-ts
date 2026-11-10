@@ -45,7 +45,7 @@ export class Id { constructor(public readonly block:number,public readonly tx:nu
 export function finish(c:number,value:number,len:number,message:Uint8Array):number{return __w_finish(c,value,len,message);}
 // Three-operand checked math and asset custody for the word-v1 subset.
 // Kinds: op3 0 mulDiv, 1 mulDivUp, 2 mulSqrt, 3 sqrt, 4 *, 5 /, 6 %, 7 min,
-// 8 max (binary kinds ignore d); custody 0 received,
+// 8 max, 9 mulMod (binary kinds ignore d); custody 0 received,
 // 1 held, 2 retain, 3 send, 4 myself. Ids are passed once, as evaluated.
 declare function __w_op3(c:number,kind:number,a:number,b:number,d:number):number;
 declare function __w_custody(c:number,kind:number,block:number,tx:number,amount:number):number;

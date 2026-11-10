@@ -5,8 +5,9 @@ import {test} from 'node:test';
 import {AlkanesVM,u128} from './vm.mjs';
 import {MAX,buildPair,differential,generator} from './differential.mjs';
 
-// Wide word-v1 arithmetic (mulDiv, mulDivUp, mulSqrt, sqrt, min, max, *, /, %)
-// against the bigint backend, plus the C leaves directly against BigInt.
+// Wide word-v1 arithmetic (mulDiv, mulDivUp, mulMod, mulSqrt, sqrt, min, max,
+// *, /, % and the exact a*b/d, a*b%d and sqrt(a*b) forms) against the bigint
+// backend, plus the C leaves directly against BigInt.
 const math=buildPair('math','test/fixtures/word-math.ts');
 const boundary=[0n,1n,3n,0xffff_ffffn,1n<<32n,(1n<<64n)-1n,(1n<<64n)+1n,(1n<<96n)-1n,1n<<127n,MAX];
 
@@ -18,12 +19,13 @@ test('wide arithmetic word-v1 matches bigint on full-width, limb-boundary and 32
   for(const b of boundary){
    for(const op of [3,5,6,7,8,9])steps.push([{inputs:[op,a,b]},null]);
    for(const [op,d] of [[1,0n],[1,(1n<<64n)+1n],[2,MAX],[10,3n],[11,(1n<<64n)+1n],[12,MAX]])steps.push([{inputs:[op,a,b,d]},null]);
+   for(let op=13;op<=21;op++)for(const d of [0n,1n,(1n<<64n)+1n,MAX])steps.push([{inputs:[op,a,b,d]},null]);
   }
  }
  const random=generator(0x9e37_79b9_7f4a_7c15n);
  for(let i=0;i<320;i++){
   const a=random(),b=random(),d=random();
-  for(let op=1;op<=12;op++)steps.push([{inputs:[op,a,b,d]},null]);
+  for(let op=1;op<=21;op++)steps.push([{inputs:[op,a,b,d]},null]);
  }
  const results=differential(math,target,steps,{},{state:false});
  const errors=new Set(results.filter(r=>r.error).map(r=>r.error.replace(/^.*Error: /,'')));
@@ -37,6 +39,43 @@ test('wide arithmetic word-v1 matches bigint on full-width, limb-boundary and 32
  assert.throws(()=>call(2,MAX,MAX,MAX-1n),/u128 overflow/);
  assert.throws(()=>call(10,MAX,2n,0n),/u128 overflow/);
  assert.throws(()=>call(10,1n,2n,0n),/u128 division by zero/);
+});
+
+test('a*b/d, a*b%d and sqrt(a*b) use the exact product on both backends; a stored product is still checked',()=>{
+ const target={block:2n,tx:31n};
+ const isqrt=n=>{if(n<2n)return n;let x=n,y=(x+1n)/2n;while(y<x){x=y;y=(x+n/x)/2n;}return x;};
+ // What plain bigint computes, with the result (not the product) checked.
+ const reference={
+  13:(a,b,d)=>a*b/d,14:(a,b,d)=>a*b%d,15:(a,b)=>isqrt(a*b),16:(a,b,d)=>a*b/d,17:(a,b,d)=>a*b%d,
+ };
+ const random=generator(0x1234_5678_9abc_def1n);
+ const cases=[[MAX,MAX,MAX],[MAX,MAX,MAX-1n],[MAX,2n,2n],[MAX,MAX,1n],[1n<<127n,4n,8n],[MAX,3n,0n],[0n,0n,0n],[7n,9n,5n]];
+ for(let i=0;i<200;i++)cases.push([random(),random(),random()]);
+ for(const {binary} of math){
+  const vm=new AlkanesVM();vm.deploy(target,binary);
+  const call=(...inputs)=>u128.decode(vm.call({target,inputs}).data);
+  for(const [a,b,d] of cases)for(const [op,ref] of Object.entries(reference)){
+   const zero=d===0n&&ref.length===3;
+   const want=zero?null:ref(a,b,d);
+   if(zero)assert.throws(()=>call(Number(op),a,b,d),/u128 division by zero/,`op ${op} ${a} ${b} ${d}`);
+   else if(want>MAX)assert.throws(()=>call(Number(op),a,b,d),/u128 overflow/,`op ${op} ${a} ${b} ${d}`);
+   else assert.equal(call(Number(op),a,b,d),want,`op ${op} ${a} ${b} ${d}`);
+  }
+  // The product no longer has to fit: these reverted with u128 overflow before.
+  assert.equal(call(13,MAX,MAX,MAX),MAX);
+  assert.equal(call(14,MAX,MAX,MAX-1n),MAX*MAX%(MAX-1n));
+  assert.equal(call(15,MAX,MAX),MAX);
+  // Division by zero is reported even when the product is wide.
+  assert.throws(()=>call(13,MAX,2n,0n),/u128 division by zero/);
+  // Only the multiplication directly under the division is exact.
+  assert.throws(()=>call(18,MAX,2n,3n),/u128 overflow/);
+  assert.equal(call(18,1n<<100n,1n<<20n,1n<<27n),1n<<127n);
+  // Stored, or used as the divisor, a product is a u128.
+  assert.throws(()=>call(19,MAX,2n,2n),/u128 overflow/);
+  assert.equal(call(19,1n<<64n,1n<<60n,1n<<4n),1n<<120n);
+  assert.throws(()=>call(20,MAX,2n,MAX),/u128 overflow/);
+  assert.equal(call(20,3n,5n,31n),2n);
+ }
 });
 
 test('word.c wide arithmetic leaves match BigInt directly on 20,000 random operand triples',()=>{
@@ -57,6 +96,7 @@ test('word.c wide arithmetic leaves match BigInt directly on 20,000 random opera
  const ops=[
   [0,(a,b,d)=>d?checked(a*b/d):'E13'],[1,(a,b,d)=>d?checked(a*b/d+(a*b%d?1n:0n)):'E13'],[2,(a,b)=>isqrt(a*b)],[3,a=>isqrt(a)],
   [4,(a,b)=>checked(a*b)],[5,(a,b)=>b?a/b:'E13'],[6,(a,b)=>b?a%b:'E13'],[7,(a,b)=>a<b?a:b],[8,(a,b)=>a>b?a:b],
+  [9,(a,b,d)=>d?a*b%d:'E13'],
  ];
  const random=generator(0x2545_f491_4f6c_dd1dn);
  for(let i=0;i<20_000;i++){
