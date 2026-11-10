@@ -1,5 +1,5 @@
 import { Contract, state, init, method, view, assert, type AlkaneId, type u128 } from "../../sdk/authoring.ts";
-import { mulDiv, mulSqrt } from "../../sdk/u128.ts";
+import { sqrt } from "../../sdk/u128.ts";
 
 // Constant-product pool for two alkanes. LP shares are this contract's own
 // alkane: adding liquidity issues them, removing liquidity takes them back
@@ -38,16 +38,16 @@ export default class AmmPool extends Contract {
     let used1 = desired1;
     let liquidity = 0n;
     if (this.supply === 0n) {
-      const root = mulSqrt(desired0, desired1);
+      const root = sqrt(desired0 * desired1);
       assert(root > 1000n, "INSUFFICIENT_LIQUIDITY_MINTED");
       liquidity = root - 1000n;
       this.supply = root;
     } else {
-      const optimal1 = mulDiv(desired0, this.reserve1, this.reserve0);
+      const optimal1 = desired0 * this.reserve1 / this.reserve0;
       if (optimal1 <= desired1) used1 = optimal1;
-      else used0 = mulDiv(desired1, this.reserve0, this.reserve1);
-      const byToken0 = mulDiv(used0, this.supply, this.reserve0);
-      const byToken1 = mulDiv(used1, this.supply, this.reserve1);
+      else used0 = desired1 * this.reserve0 / this.reserve1;
+      const byToken0 = used0 * this.supply / this.reserve0;
+      const byToken1 = used1 * this.supply / this.reserve1;
       liquidity = byToken0 < byToken1 ? byToken0 : byToken1;
       assert(liquidity > 0n, "INSUFFICIENT_LIQUIDITY_MINTED");
       this.supply += liquidity;
@@ -66,8 +66,8 @@ export default class AmmPool extends Contract {
   removeLiquidity(min0: u128, min1: u128): u128 {
     const liquidity = this.assets.received(this.context.myself);
     assert(liquidity > 0n, "INSUFFICIENT_INPUT");
-    const amount0 = mulDiv(liquidity, this.reserve0, this.supply);
-    const amount1 = mulDiv(liquidity, this.reserve1, this.supply);
+    const amount0 = liquidity * this.reserve0 / this.supply;
+    const amount1 = liquidity * this.reserve1 / this.supply;
     assert(amount0 > 0n && amount1 > 0n, "INSUFFICIENT_LIQUIDITY_BURNED");
     assert(amount0 >= min0 && amount1 >= min1, "SLIPPAGE");
     this.assets.retain(this.context.myself, liquidity);
@@ -116,8 +116,8 @@ export default class AmmPool extends Contract {
   // for any reserves. A quote for an input larger than any possible balance
   // reverts with u128 overflow instead.
   private amountOut(amountIn: u128, reserveIn: u128, reserveOut: u128): u128 {
-    const afterFee = mulDiv(amountIn, 997n, 1000n);
-    return mulDiv(afterFee, reserveOut, reserveIn + afterFee);
+    const afterFee = amountIn * 997n / 1000n;
+    return afterFee * reserveOut / (reserveIn + afterFee);
   }
 
   @view({ opcode: 10 })

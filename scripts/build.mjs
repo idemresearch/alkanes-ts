@@ -270,6 +270,7 @@ function buildContract(name, options = {}) {
   const importPath = (p) => "./" + relative(work, p).replaceAll("\\", "/");
   const compiled = compileContract({ filename: source, wordLowering: true });
   if (compiled) {
+    for (const warning of compiled.warnings ?? []) console.warn(warning);
     writeFileSync(entry, compiled.lowered);
     writeFileSync(join(root, "dist", `${name}.abi.json`), compiled.abi + "\n");
     writeFileSync(join(root, "dist", `${name}.manifest.json`), JSON.stringify(compiled.manifest, null, 2) + "\n");

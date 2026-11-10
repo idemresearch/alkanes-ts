@@ -39,6 +39,9 @@ export function bitNot(a: bigint): bigint { return U128_LIMIT ^ checked(a); }
 
 // Explicit wrapping, and a wider product for AMM-style mul/div. The public
 // boundaries validate operands even when called from ordinary TypeScript.
+// The frontend also lowers `a * b / d`, `a * b % d` and `sqrt(a * b)` to
+// mulDiv, mulMod and mulSqrt: a product that is divided or reduced at once is
+// exact, as it is for plain bigints, and only the result must fit.
 export function wrappingAdd(a: bigint, b: bigint): bigint { return (checked(a) + checked(b)) & U128_LIMIT; }
 export function wrappingSub(a: bigint, b: bigint): bigint { return (checked(a) - checked(b)) & U128_LIMIT; }
 export function mulDiv(a: bigint, b: bigint, denominator: bigint): bigint {
@@ -51,6 +54,12 @@ export function mulDivUp(a: bigint, b: bigint, denominator: bigint): bigint {
   if (denominator === 0n) throw new Error("u128 division by zero");
   const product = a * b;
   return checked(product / denominator + (product % denominator === 0n ? 0n : 1n));
+}
+// (a * b) % modulus with the exact product: the lowering of `a * b % d`.
+export function mulMod(a: bigint, b: bigint, modulus: bigint): bigint {
+  checked(a); checked(b); checked(modulus);
+  if (modulus === 0n) throw new Error("u128 division by zero");
+  return (a * b) % modulus;
 }
 export function min(a: bigint, b: bigint): bigint { return checked(a) < checked(b) ? a : b; }
 export function max(a: bigint, b: bigint): bigint { return checked(a) > checked(b) ? a : b; }

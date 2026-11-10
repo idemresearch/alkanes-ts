@@ -22,7 +22,7 @@ export function lowerWords({filename,source,manifest,abi,sdkDirectory}){
   const bytes=s=>hoist('bytes:'+s,name=>fill(name,Buffer.from(s,'utf8')));
   // ---- word-v1 extension state: u128.ts math imports, private helpers,
   // custody/division error codes and the helper call graph. ----
-  const mathOps=new Map([['mulDiv',['op3',0,3]],['mulDivUp',['op3',1,3]],['mulSqrt',['op3',2,2]],['sqrt',['op3',3,1]],['min',['op3',7,2]],['max',['op3',8,2]]]);
+  const mathOps=new Map([['mulDiv',['op3',0,3]],['mulDivUp',['op3',1,3]],['mulSqrt',['op3',2,2]],['sqrt',['op3',3,1]],['min',['op3',7,2]],['max',['op3',8,2]],['mulMod',['op3',9,3]]]);
   const math=new Set(),helpers=new Map(),calls=new Map(),used=new Set();
   // Only unaliased named imports of the listed sdk/u128.ts functions.
   const mathImport=node=>{
@@ -136,6 +136,10 @@ export function lowerWords({filename,source,manifest,abi,sdkDirectory}){
    const ctx='this.__alk_ctx',check=`if(__alk_word.failed(${ctx}))return 0;`;
    // Wide kinds go through op3 so the hot op() leaf keeps its small frame.
    const arithmetic=new Map([['*',4],['/',5],['%',6]]);
+   // A product divided, reduced or rooted where it is written is exact, like
+   // the bigint backend (compiler/index.mjs exactProduct): a*b/d is mulDiv,
+   // a*b%d is mulMod and sqrt(a*b) is mulSqrt. A stored product is checked.
+   const product=n=>{while(ts.isParenthesizedExpression(n))n=n.expression;return ts.isBinaryExpression(n)&&n.operatorToken.kind===ts.SyntaxKind.AsteriskToken?n:null;};
    const lets=new Set();
    const imported=(n,name)=>ts.isIdentifier(n)&&n.text===name&&sdkNames.has(name)&&!names.has(name);
    // AlkaneId.equals: any receiver typed AlkaneId (helpers named equals are this.equals).
@@ -157,7 +161,7 @@ export function lowerWords({filename,source,manifest,abi,sdkDirectory}){
     const callee=n.expression.getText(file),h=helperCall(n);
     if(ts.isIdentifier(n.expression)&&math.has(callee)&&!names.has(callee)){
      if(n.arguments.length!==mathOps.get(callee)[2]||n.arguments.some(a=>type(a)!=='u128'))no();
-     if(callee==='mulDiv'||callee==='mulDivUp')used.add(13);
+     if(callee==='mulDiv'||callee==='mulDivUp'||callee==='mulMod')used.add(13);
      return'u128';
     }
     if(callee==='this.assets.received'||callee==='this.assets.held'){
@@ -181,6 +185,8 @@ export function lowerWords({filename,source,manifest,abi,sdkDirectory}){
     if(ts.isConditionalExpression(n))return`((${expr(n.condition)})?(${expr(n.whenTrue)}):(${expr(n.whenFalse)}))`;
     if(ts.isBinaryExpression(n)){
      const op=n.operatorToken.getText(file);
+     const exact=op==='/'||op==='%'?product(n.left):null;
+     if(exact)return`__alk_word.op3(${ctx},${op==='/'?0:9},${expr(exact.left)},${expr(exact.right)},${expr(n.right)})`;
      if(arithmetic.has(op))return`__alk_word.op3(${ctx},${arithmetic.get(op)},${expr(n.left)},${expr(n.right)},0)`;
      if(['===','!=='].includes(op)&&type(n.left)==='boolean')return`((${expr(n.left)})${op}(${expr(n.right)}))`;
      return undefined;
@@ -188,6 +194,8 @@ export function lowerWords({filename,source,manifest,abi,sdkDirectory}){
     if(!ts.isCallExpression(n))return undefined;
     const callee=n.expression.getText(file),h=helperCall(n);
     if(ts.isIdentifier(n.expression)&&math.has(callee)&&!names.has(callee)){
+     const exact=callee==='sqrt'?product(n.arguments[0]):null;
+     if(exact)return`__alk_word.op3(${ctx},2,${expr(exact.left)},${expr(exact.right)},0)`;
      const [fn,kind,arity]=mathOps.get(callee),values=n.arguments.map(a=>expr(a));
      while(fn==='op3'&&values.length<3)values.push('0');
      return`__alk_word.${fn}(${ctx},${kind},${values.join(',')})`;
