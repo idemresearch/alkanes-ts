@@ -1,6 +1,6 @@
 import { Contract, state, init, method, view, assert, type AlkaneId, type u128 } from "../../sdk/authoring.ts";
 import { height } from "../../sdk/index.ts";
-import { mulDiv, mulDivUp } from "../../sdk/u128.ts";
+import { mulDivUp } from "../../sdk/u128.ts";
 
 // ERC-4626-style vault over one underlying alkane. Shares are this contract's
 // own alkane: depositing the underlying issues them, redeeming takes them back
@@ -217,20 +217,20 @@ export default class ShareVault extends Contract {
     const elapsed = now > start ? now - start : 0n;
     if (elapsed >= vesting) return 0n;
     const remaining = vesting - elapsed;
-    return roundUp ? mulDivUp(lockedAtHarvest, remaining, vesting) : mulDiv(lockedAtHarvest, remaining, vesting);
+    return roundUp ? mulDivUp(lockedAtHarvest, remaining, vesting) : lockedAtHarvest * remaining / vesting;
   }
 
   // Shares issued for `assets` given the effective totals, rounded down
   // (favors the vault). The product is exact; only a quotient above u128
   // (more than about 2^128 / 1000 assets at the initial price) overflows.
   private toShares(assets: u128, effective: u128, issued: u128): u128 {
-    return mulDiv(assets, issued + 1000n, effective + 1n);
+    return assets * (issued + 1000n) / (effective + 1n);
   }
 
   // Underlying paid for `shares` (at most `issued`) given the effective
   // totals, rounded down (favors the vault).
   private toAssets(shares: u128, effective: u128, issued: u128): u128 {
-    return mulDiv(shares, effective + 1n, issued + 1000n);
+    return shares * (effective + 1n) / (issued + 1000n);
   }
 
   // I4 headroom: the most that can be added to managed while managed + 1
