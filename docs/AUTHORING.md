@@ -116,9 +116,27 @@ One named default class must extend `Contract`. ABI parameters are required `u12
 
 Constructors, custom accessors, additional inheritance, generics on methods/classes, async/generators, unsafe casts/`any`, escaping `this`, dynamic calls, bigint exponentiation, complex compound-assignment targets and value-producing postfix increment are rejected. Views also reject writes through object/array aliases: a byte buffer returned by an SDK storage read can alias a buffered write, so such mutations cannot be assumed local. Unsupported constructs produce diagnostics instead of silently retaining unchecked semantics. SDK implementation code is trusted and is not rewritten by the authoring compiler.
 
-`npm run typecheck` runs TypeScript plus Alkanes diagnostics. `npm run build` runs those Alkanes checks before invoking scriptc. Diagnostics include source file, line and column. Plain editor TypeScript currently sees `u128` as bigint: a language-service plugin is still needed to surface Alkanes effect/range diagnostics live. Marker decorators throw if executed without the frontend; transpiling the original source as ordinary JavaScript is not a supported test path.
+`npm run typecheck` runs TypeScript plus Alkanes diagnostics. `npm run build` runs those Alkanes checks before invoking scriptc. Diagnostics include source file, line and column. Plain editor TypeScript currently sees `u128` as bigint: a language-service plugin is still needed to surface Alkanes effect/range diagnostics live. Marker decorators throw if executed without the frontend; transpiling the original source as ordinary JavaScript is not a supported test path. To run a contract without building it, deploy its source to the test VM, which applies the frontend first ([below](#testing-from-source)).
 
 `npm test` rebuilds production contracts, builds semantic/auth fixtures through the same frontend/linker, then runs compiler rejection tests, generated-client type/runtime tests, and Wasm host-model behavior tests. The semantics fixture also runs in wasmi 0.37.2. `ALKANES_RS=/path/to/alkanes-rs npm run test:runtime` additionally runs the unmodified canonical indexer, including deployment envelopes, real auth, balances, rollback, and TS/Rust parity. See the [recorded integration result](../integration/RESULTS.md).
+
+## Testing from source
+
+The test VM runs a contract straight from its TypeScript, with no Wasm build, scriptc or Zig:
+
+```js
+import { AlkanesVM, u128 } from "./vm.mjs";
+
+const vm = new AlkanesVM();
+const counter = { block: 2n, tx: 1n };
+vm.deploy(counter, "contracts/counter/index.ts");   // a path instead of Wasm bytes
+vm.call({ target: counter, inputs: [0] });
+u128.decode(vm.call({ target: counter, inputs: [1, 5] }).data);   // 5n
+```
+
+`deploy` accepts a built module's bytes or a source path, and the two can be mixed in one VM, calling each other. A source contract goes through the same frontend as a build, so its diagnostics and warnings appear when it is deployed, then the general bigint lowering and the SDK run in Node against the VM's storage, balances and nested calls (`test/source.mjs`). Each call starts from fresh module state, as each call gets a fresh Wasm instance. Compiling a contract takes about half a second and a call well under a millisecond; `npm run test:source` runs the Counter/Token, AmmPool and semantics suites this way in about two seconds. The lowered module that runs is written to `build/source/` for reference.
+
+This is the contract's source run by V8, not the module that ships. It measures no fuel or size, and it never runs the fixed-width backend or the scriptc runtime. `test/source.test.mjs` replays call sequences for all seven examples from source and from `dist/` and requires identical responses, reverts, storage, balances and logs after every call, and runs the three suites above unchanged from source. Use source tests while writing a contract and the built module before relying on it.
 
 ## API validation still needed
 

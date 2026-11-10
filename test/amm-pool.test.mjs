@@ -4,6 +4,8 @@ import {test} from 'node:test';
 import {AlkanesVM,u128} from './vm.mjs';
 
 // dist/amm-pool.wasm is built by `npm run build` (npm test rebuilds first).
+// ALKANES_SOURCE=1 runs the contract from its TypeScript source instead.
+const poolCode=process.env.ALKANES_SOURCE?'contracts/amm-pool/index.ts':readFileSync('dist/amm-pool.wasm');
 const pool={block:2n,tx:10n},t0={block:2n,tx:1n},t1={block:2n,tx:2n},other={block:2n,tx:3n};
 const MAX=(1n<<128n)-1n;
 
@@ -13,7 +15,7 @@ const amountOut=(amountIn,rIn,rOut)=>{const x=amountIn*997n/1000n;return x*rOut/
 
 function setup(){
   const vm=new AlkanesVM();
-  vm.deploy(pool,readFileSync('dist/amm-pool.wasm'));
+  vm.deploy(pool,poolCode);
   vm.call({target:pool,inputs:[0,t0.block,t0.tx,t1.block,t1.tx]});
   return vm;
 }
@@ -27,7 +29,7 @@ const paid=(response,id)=>response.alkanes.filter(t=>t.id.block===id.block&&t.id
 const assertBacked=vm=>{const s=state(vm);assert.equal(vm.balanceOf(pool,t0),s.r0);assert.equal(vm.balanceOf(pool,t1),s.r1);};
 
 test('AmmPool initializes once, rejects identical tokens and gates methods until initialized',()=>{
-  const vm=new AlkanesVM();vm.deploy(pool,readFileSync('dist/amm-pool.wasm'));
+  const vm=new AlkanesVM();vm.deploy(pool,poolCode);
   assert.throws(()=>add(vm,10n,10n),/NOT_INITIALIZED/);
   assert.throws(()=>vm.call({target:pool,inputs:[0,t0.block,t0.tx,t0.block,t0.tx]}),/IDENTICAL_TOKENS/);
   assert.throws(()=>vm.call({target:pool,inputs:[0,pool.block,pool.tx,t1.block,t1.tx]}),/LP_TOKEN_AS_RESERVE/);

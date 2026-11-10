@@ -50,7 +50,7 @@ contracts/          example contracts
 shim/               adapter + WASI stand-ins in WebAssembly text, C SDK leaves, minimal printf
 scripts/build.mjs   build pipeline (link.mjs: SCRIPTC_LINKER wrapper; printf-formats.mjs: format check)
 scripts/size.mjs    code size by function, from build/<name>/named.wasm
-test/               JS alkanes host model and contract tests
+test/               JS alkanes host model (vm.mjs; source.mjs runs contracts from source) and contract tests
 integration/        actual upstream indexer tests, pinned dependencies and results
 harness/            Rust wasmi 0.37.2 host model: wasmi-check runner and bench
 bench/              Rust twins of the examples and the alkanes-rs comparison

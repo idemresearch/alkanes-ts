@@ -7,12 +7,17 @@ import { buildLibrary } from "../scripts/build.mjs";
 import { AlkanesVM, u128 } from "./vm.mjs";
 
 const work = resolve("build/test-semantics");
-mkdirSync(work, { recursive: true });
-const compiled = compileContract({ filename: resolve("test/fixtures/semantics.ts") });
-writeFileSync(resolve(work, "entry.ts"), compiled.lowered);
-// Compile precisely the output under test using the production linker.
-buildLibrary({ entry: resolve(work, "entry.ts"), work, out: resolve(work, "semantics.wasm") });
-const bytes = readFileSync(resolve(work, "semantics.wasm"));
+// ALKANES_SOURCE=1 runs the fixture from its TypeScript source
+// (test/source.mjs) instead of building it.
+let bytes = resolve("test/fixtures/semantics.ts");
+if (!process.env.ALKANES_SOURCE) {
+  mkdirSync(work, { recursive: true });
+  const compiled = compileContract({ filename: bytes });
+  writeFileSync(resolve(work, "entry.ts"), compiled.lowered);
+  // Compile precisely the output under test using the production linker.
+  buildLibrary({ entry: resolve(work, "entry.ts"), work, out: resolve(work, "semantics.wasm") });
+  bytes = readFileSync(resolve(work, "semantics.wasm"));
+}
 const target = { block: 2n, tx: 1n }, MAX = (1n << 128n) - 1n;
 const setup = () => { const vm = new AlkanesVM(); vm.deploy(target, bytes); return vm; };
 const call = (vm, ...inputs) => u128.decode(vm.call({ target, inputs }).data);

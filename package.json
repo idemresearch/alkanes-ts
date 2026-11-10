@@ -12,6 +12,7 @@
     "build": "node scripts/build.mjs",
     "test": "npm run build && node --test test/*.test.mjs",
     "test:built": "node --test test/*.test.mjs",
+    "test:source": "ALKANES_SOURCE=1 node --test test/contracts.test.mjs test/amm-pool.test.mjs test/semantics.test.mjs",
     "typecheck": "tsc --noEmit && node compiler/check.mjs",
     "size": "node scripts/size.mjs",
     "check:wasmi": "cargo run --quiet --release --manifest-path harness/Cargo.toml --bin wasmi-check --",

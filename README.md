@@ -68,6 +68,10 @@ Contracts build in parallel, and a build whose inputs have not changed is
 skipped (`npm run build -- --force` rebuilds). `npm run size -- counter` lists
 the largest functions of a built contract.
 
+While writing a contract you can skip the build: the test VM also runs a
+contract from its TypeScript source, in about a second, without Zig
+(`npm run test:source`; see [testing from source](docs/AUTHORING.md#testing-from-source)).
+
 To add a contract, create `contracts/<name>/index.ts` with a default-exported
 `Contract`, then run `npm run build -- <name>`. The
 [authoring guide](docs/AUTHORING.md) covers the semantics, generated clients,

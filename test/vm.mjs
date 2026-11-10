@@ -9,6 +9,12 @@
 // delegatecall moves nothing. A debit beyond the balance fails unless the asset
 // is the debtor's own ID, which mints it. Every balance change rolls back with
 // the storage checkpoint. Fuel accounting is not modeled.
+//
+// deploy() takes a built module's bytes or the path of a contract's
+// TypeScript source. A source contract runs in Node (test/source.mjs) against
+// the same host state, so tests can skip the Wasm build while iterating.
+
+import { SourceProgram, sourceProgram } from "./source.mjs";
 
 const REVERT = [0x08, 0xc3, 0x79, 0xa0];
 
@@ -118,14 +124,15 @@ export class AlkanesVM {
       [3n, () => u128.encode(0n)],
     ]);
     this.sequence = 0n;
-    this.modules = new Map(); // idKey -> WebAssembly.Module
+    this.modules = new Map(); // idKey -> WebAssembly.Module | SourceProgram
     this.storage = new Map(); // idKey -> Map<hex key, Uint8Array>
     this.balances = new Map(); // `${who}/${what}` -> bigint
     this.logs = [];
   }
 
-  deploy(id, wasm) {
-    this.modules.set(idKey(id), new WebAssembly.Module(wasm));
+  // `code` is a Wasm binary, or the path of a contract's TypeScript source.
+  deploy(id, code) {
+    this.modules.set(idKey(id), typeof code === "string" ? sourceProgram(code) : new WebAssembly.Module(code));
     return id;
   }
 
@@ -238,6 +245,17 @@ export class AlkanesVM {
   instantiate(id, frame) {
     const module = this.modules.get(idKey(id));
     if (!module) throw new RevertError(`no contract at ${idKey(id)}`);
+    if (module instanceof SourceProgram) {
+      const instance = module.instantiate(this.sourceHost(frame));
+      // Bytes are copied at the boundary, as they are in and out of Wasm memory.
+      return {
+        exports: {
+          __execute: () => Uint8Array.from(instance.execute(this.serializeContext(frame))),
+          __meta: () => Uint8Array.from(instance.meta()),
+        },
+        read: (bytes) => bytes,
+      };
+    }
     let memory;
     const mem = () => new Uint8Array(memory.buffer);
     const read = (ptr) => {
@@ -259,13 +277,7 @@ export class AlkanesVM {
       __log: (ptr) => this.logs.push(Buffer.from(read(ptr)).toString("utf8")),
       __request_storage: (k) => (storage().get(hex(read(k))) ?? new Uint8Array(0)).length,
       __load_storage: (k, v) => write(v, storage().get(hex(read(k))) ?? new Uint8Array(0)),
-      __balance: (who, what, out) => {
-        const w = new Reader(read(who));
-        const t = new Reader(read(what));
-        const key = `${w.u128()}:${w.u128()}/${t.u128()}:${t.u128()}`;
-        // Canonical __balance returns the stored bytes: empty if never set.
-        write(out, this.balances.has(key) ? u128.encode(this.balances.get(key)) : new Uint8Array(0));
-      },
+      __balance: (who, what, out) => write(out, this.balanceBytes(read(who), read(what))),
       __request_context: () => this.serializeContext(frame).length,
       __load_context: (out) => write(out, this.serializeContext(frame)),
       __sequence: (out) => write(out, u128.encode(this.sequence)),
@@ -283,6 +295,46 @@ export class AlkanesVM {
     const instance = new WebAssembly.Instance(module, { env });
     memory = instance.exports.memory;
     return { exports: instance.exports, read };
+  }
+
+  // Canonical __balance returns the stored bytes: empty if never set.
+  balanceBytes(who, what) {
+    const w = new Reader(who);
+    const t = new Reader(what);
+    const key = `${w.u128()}:${w.u128()}/${t.u128()}:${t.u128()}`;
+    return this.balances.has(key) ? u128.encode(this.balances.get(key)) : new Uint8Array(0);
+  }
+
+  // The SDK's host callbacks (sdk/host.ts) for a source contract: what
+  // shim/adapter.wat builds on the env.* functions above. A host result is
+  // left in a scratch buffer and read back four bytes at a time.
+  sourceHost(frame) {
+    let scratch = new Uint8Array(0);
+    const result = (bytes) => (scratch = bytes).length;
+    const u64 = (value) => new Uint8Array(new BigUint64Array([value]).buffer);
+    const kinds = ["call", "delegatecall", "staticcall"];
+    return {
+      __alk_abort: () => {
+        frame.failed = true;
+      },
+      __alk_log: (message) => {
+        this.logs.push(Buffer.from(message).toString("utf8"));
+      },
+      __alk_scratch_read: (offset) =>
+        ((scratch[offset] ?? 0) | ((scratch[offset + 1] ?? 0) << 8) | ((scratch[offset + 2] ?? 0) << 16) | ((scratch[offset + 3] ?? 0) << 24)) >>> 0,
+      __alk_load_storage: (key) => result(this.storageOf(frame.myself).get(hex(key)) ?? new Uint8Array(0)),
+      __alk_balance: (who, what) => result(this.balanceBytes(who, what)),
+      __alk_sequence: () => result(u128.encode(this.sequence)),
+      __alk_fuel: () => result(u64(100_000_000n)),
+      __alk_height: () => result(u64(this.height)),
+      __alk_transaction: () => result(new Uint8Array(0)),
+      __alk_block: () => result(new Uint8Array(0)),
+      __alk_extcall: (kind, cellpack, alkanes, storage) => {
+        const status = this.extcall(kinds[kind], frame, Uint8Array.from(cellpack), Uint8Array.from(alkanes), Uint8Array.from(storage));
+        scratch = frame.returndata;
+        return status;
+      },
+    };
   }
 
   // Runs __execute for `frame` and commits its storage writes on success.

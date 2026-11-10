@@ -4,9 +4,13 @@ import { test } from "node:test";
 import { resolve } from "node:path";
 import { AlkanesVM, u128 } from "./vm.mjs";
 
-const wasm = (name) => readFileSync(process.env.ALKANES_DIST
-  ? resolve(process.env.ALKANES_DIST, `${name}.wasm`)
-  : new URL(`../dist/${name}.wasm`, import.meta.url));
+// ALKANES_SOURCE=1 deploys the contracts' TypeScript source (test/source.mjs)
+// instead of the built modules, so this file runs without a Wasm build.
+const wasm = (name) => process.env.ALKANES_SOURCE
+  ? resolve("contracts", name, "index.ts")
+  : readFileSync(process.env.ALKANES_DIST
+    ? resolve(process.env.ALKANES_DIST, `${name}.wasm`)
+    : new URL(`../dist/${name}.wasm`, import.meta.url));
 const text = (bytes) => Buffer.from(bytes).toString("utf8");
 
 const COUNTER = { block: 2n, tx: 1n };
